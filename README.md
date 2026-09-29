@@ -111,7 +111,7 @@ Run the checks before every commit:
 tests/run
 ```
 
-It checks the manifest, the QML syntax, the model tests and, when Omarchy is installed, `omarchy plugin validate`. The model tests need Node, which is used only for tests, never at run time.
+It checks the manifest, the QML syntax when `qmllint` (from `qt6-declarative`) is installed, the model tests and, when Omarchy is installed, `omarchy plugin validate`. It needs Python 3 and Node, which are used only for tests, never at run time.
 
 To run the plugin from a checkout instead of the installed copy, point Omarchy's plugin folder at it and restart the shell:
 

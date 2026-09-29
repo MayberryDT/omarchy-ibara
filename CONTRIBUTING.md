@@ -12,7 +12,7 @@ Problems with installing, agents, pairing or Take Control usually belong in [iba
 
 1. Read [design](docs/design.md) and follow it exactly: square shapes, theme colors only, Title Case button text and plain English messages.
 2. Try console changes in [the fictional wall](docs/fictional-wall.md) first. It runs under its own plugin ID and cannot reach real computers.
-3. Run `tests/run` before every commit. It checks the manifest, QML syntax, the model tests and, when Omarchy is installed, `omarchy plugin validate`.
+3. Run `tests/run` before every commit. It checks the manifest, the QML syntax when `qmllint` (from `qt6-declarative`) is installed, the model tests and, when Omarchy is installed, `omarchy plugin validate`. It needs Python 3 and Node.
 4. Use made-up computers and people in tests, fixtures and screenshots.
 5. Update [the console reference](docs/reference.md) when behavior changes, and add a line to the [changelog](CHANGELOG.md) for anything a person would notice.
 6. Open a pull request and fill in the template.

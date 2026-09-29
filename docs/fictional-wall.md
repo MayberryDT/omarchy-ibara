@@ -10,7 +10,7 @@ The stage script creates a separate **development-only** plugin ID (a unique `io
 node tests/stage-wall-acceptance.mjs 20
 ```
 
-The command prints `/tmp/ibara-wall-acceptance-*` and, on its second line, the command that starts that package's fictional daemon on `/tmp/ibara-dev-wall-<plugin-id>/ibarad.sock` (also recorded in `DEVELOPMENT-ONLY`):
+The command prints `/tmp/ibara-wall-acceptance-*` and, on its second line, the command that starts that package's fictional daemon on `/tmp/ibara-dev-wall-<plugin-id>/ibarad.sock` (also recorded in `DEVELOPMENT-ONLY`). Both folders are in `$TMPDIR` when it is set, instead of `/tmp`:
 
 ```sh
 IBARA_DEV_WALL_COUNT=20 node /tmp/ibara-wall-acceptance-*/scripts/dev-fixture-daemon.mjs /tmp/ibara-dev-wall-<plugin-id>/ibarad.sock
