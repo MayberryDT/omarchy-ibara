@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "request_id": "fixture",
+  "command": "status",
+  "target": "ibara",
+  "observed_at": "2026-09-15T18:00:00Z",
+  "connection": "ready",
+  "desktop": "locked",
+  "owner": {
+    "availability": "unavailable",
+    "human_control": false,
+    "paused": false,
+    "unsettled": false,
+    "lease": null
+  },
+  "capabilities": {},
+  "stale": false,
+  "data": {
+    "availability": "unavailable",
+    "capabilities": [
+      {
+        "name": "session",
+        "status": "unavailable",
+        "reason": "The graphical session is locked and requires a human unlock."
+      }
+    ]
+  },
+  "error": null
+}

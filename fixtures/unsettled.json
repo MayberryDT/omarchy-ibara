@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "request_id": "fixture",
+  "command": "status",
+  "target": "ibara",
+  "observed_at": "2026-09-15T18:00:00Z",
+  "connection": "ready",
+  "desktop": "unsettled",
+  "owner": {
+    "availability": "control_unsettled",
+    "human_control": false,
+    "paused": false,
+    "unsettled": true,
+    "lease": null
+  },
+  "capabilities": {},
+  "stale": false,
+  "data": {
+    "availability": "control_unsettled",
+    "control": {
+      "human_control": false,
+      "paused": false,
+      "unsettled": true
+    },
+    "lease": null
+  },
+  "error": null
+}

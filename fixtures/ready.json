@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "request_id": "fixture",
+  "command": "status",
+  "target": "ibara",
+  "observed_at": "2026-09-15T18:00:00Z",
+  "connection": "ready",
+  "desktop": "ready",
+  "owner": {
+    "availability": "ready",
+    "human_control": false,
+    "paused": false,
+    "unsettled": false,
+    "lease": null
+  },
+  "capabilities": {},
+  "stale": false,
+  "data": {
+    "availability": "ready",
+    "control": {
+      "human_control": false,
+      "paused": false,
+      "unsettled": false,
+      "epoch": "epoch_fix",
+      "session_hint": true
+    },
+    "lease": null,
+    "tasks": [
+      {
+        "task_ref": "task_hazel_1",
+        "principal": "hazel",
+        "state": "active",
+        "goal": "Prepare the local fixture form.",
+        "created_at": "2026-09-15T16:00:00Z",
+        "updated_at": "2026-09-15T17:00:00Z",
+        "live": true,
+        "budgets": {
+          "active_control_seconds": 1200
+        },
+        "unresolved_request_ids": [],
+        "completion_outcome": null,
+        "completion_summary": null
+      },
+      {
+        "task_ref": "task_vesper_1",
+        "principal": "vesper",
+        "state": "completed",
+        "goal": "Collect the signed PDF.",
+        "created_at": "2026-09-15T12:00:00Z",
+        "updated_at": "2026-09-15T13:00:00Z",
+        "live": false,
+        "budgets": {
+          "active_control_seconds": 0
+        },
+        "unresolved_request_ids": [
+          "req_unknown"
+        ],
+        "completion_outcome": "handoff",
+        "completion_summary": "Needs a human to finish verification."
+      }
+    ],
+    "items": [
+      {
+        "kind": "artifact_summary",
+        "artifact_ref": "artifact_ok",
+        "task_ref": "task_hazel_1",
+        "principal": "hazel",
+        "name": "report.txt",
+        "size_bytes": 12,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-09-15T17:01:00Z",
+        "delivery": "available",
+        "bytes_available": true
+      },
+      {
+        "kind": "artifact_summary",
+        "artifact_ref": "artifact_old",
+        "task_ref": "task_vesper_1",
+        "principal": "vesper",
+        "name": "gone.bin",
+        "size_bytes": 4,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "created_at": "2026-09-01T00:00:00Z",
+        "delivery": "unavailable",
+        "bytes_available": false
+      }
+    ],
+    "procedures": [
+      {
+        "kind": "procedure",
+        "procedure_ref": "proc_fixture",
+        "version": "0.1-candidate",
+        "status": "candidate",
+        "source_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "definition": {
+          "title": "Inspect the locked session",
+          "inputs": [
+            "Current lock state"
+          ],
+          "applicability": [
+            "ibara graphical session"
+          ],
+          "steps": [
+            "Do not type the password.",
+            "Ask a person there to unlock it."
+          ],
+          "expected_outputs": [
+            "Unlocked session"
+          ],
+          "verification": [
+            "hyprctl reports an unlocked session"
+          ],
+          "stop_conditions": [
+            "Password prompt"
+          ],
+          "evidence_refs": [
+            "check-lock"
+          ]
+        }
+      }
+    ],
+    "cpu": {
+      "loadavg_1": 0.21,
+      "loadavg_5": 0.18,
+      "loadavg_15": 0.12
+    },
+    "memory": {
+      "mem_total_kb": 8000000,
+      "mem_available_kb": 4200000
+    },
+    "disk": {
+      "path": "/",
+      "total_bytes": 128000000000,
+      "available_bytes": 64000000000
+    }
+  },
+  "error": null
+}

@@ -1,0 +1,3752 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import "StatusModel.js" as StatusModel
+import "ServiceBridge.js" as ServiceBridge
+
+Item {
+  id: root
+  readonly property string notificationTraceCandidate: "follow-notify-attribution-20260924-r1"
+  readonly property string notificationTraceRootId: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 14)
+  property double notificationTraceRootOrdinal: 0
+  property string omarchyPath: ""
+  property var shell: null
+  property var manifest: null
+  property var settings: ({})
+  property var computers: []
+  property var sessions: ({})
+  property var followedTasks: ({})
+  function notificationTracePrefix(event) {
+    return "[ibara-follow-trace] candidate=" + notificationTraceCandidate + "-root-" + notificationTraceRootOrdinal +
+      " root=" + notificationTraceRootId + " event=" + event
+  }
+  function notificationTraceToken(value) {
+    var text = String(value || "")
+    return /^[A-Za-z0-9_.:-]{1,128}$/.test(text) ? text : "invalid"
+  }
+  function notificationTraceState(value) {
+    return ["completed", "partial", "cancelled", "blocked", "unverified"].indexOf(value) !== -1 ? value : "invalid"
+  }
+  function notificationTraceNotice(value) {
+    return value === "verified-completion" ? value : "invalid"
+  }
+  function logDroppedFollowNotice(notice, reason) {
+    if (!notice || !notice.trace) return
+    var allowedReasons = ["target-binding-or-policy", "target-denied", "target-epoch-changed", "protected-views-cleared"]
+    var safeReason = allowedReasons.indexOf(reason) !== -1 ? reason : "unknown"
+    console.info(root.notificationTracePrefix("notice-dropped") +
+      " computer=" + root.notificationTraceToken(notice.trace.computerId) +
+      " task_ref=" + root.notificationTraceToken(notice.trace.taskRef) +
+      " state=" + root.notificationTraceState(notice.trace.state) +
+      " verified=" + (notice.trace.verified === true ? "true" : "false") +
+      " notice=" + root.notificationTraceNotice(notice.trace.notice) + " reason=" + safeReason)
+  }
+  function followTask(computerId) {
+    var session = sessions[String(computerId || "")]
+    var ref = session ? String(session.active_task_ref || "") : ""
+    if (!session || session.trust_state !== "verified" || !session.controller_epoch ||
+        !/^[A-Za-z0-9_.:-]{1,128}$/.test(ref) || denied) return false
+    var next = Object.assign({}, followedTasks)
+    next[computerId] = { computerId: computerId, taskRef: ref, endpointId: session.endpoint_id,
+      bindingRevision: session.binding_revision, authorizationGeneration: session.authorization_generation,
+      epoch: session.controller_epoch }
+    followedTasks = next
+    pollFollowedTasks()
+    return true
+  }
+  function unfollowTask(computerId) {
+    var next = Object.assign({}, followedTasks)
+    delete next[computerId]
+    followedTasks = next
+  }
+  function sameFollowIdentity(follow, snapshot) {
+    return !!follow && !!snapshot && follow.computerId === snapshot.computerId &&
+      follow.taskRef === snapshot.taskRef && follow.endpointId === snapshot.endpointId &&
+      follow.bindingRevision === snapshot.bindingRevision &&
+      follow.authorizationGeneration === snapshot.authorizationGeneration && follow.epoch === snapshot.epoch
+  }
+  function sameTargetIdentity(target, snapshot) {
+    return !!target && !!snapshot && target.computerId === snapshot.computerId &&
+      target.endpointId === snapshot.endpointId && target.bindingRevision === snapshot.bindingRevision &&
+      target.authorizationGeneration === snapshot.authorizationGeneration && target.epoch === snapshot.epoch
+  }
+  function sessionStatusSnapshot(computerId) {
+    var id = String(computerId || ""), session = sessions[id], follow = followedTasks[id]
+    if (!session) return null
+    return {
+      computerId: id, endpointId: session.endpoint_id, bindingRevision: session.binding_revision,
+      authorizationGeneration: session.authorization_generation, epoch: session.controller_epoch,
+      followSnapshot: follow ? Object.assign({}, follow) : null
+    }
+  }
+  function sameSessionStatusRequest(request) {
+    var snapshot = request.sessionSnapshot, current = sessions[request.ref], follow = followedTasks[request.ref]
+    if (!snapshot || !current || snapshot.computerId !== request.ref || current.computer_id !== request.ref ||
+        current.trust_state !== "verified" || current.endpoint_id !== snapshot.endpointId ||
+        current.binding_revision !== snapshot.bindingRevision ||
+        current.authorization_generation !== snapshot.authorizationGeneration || current.controller_epoch !== snapshot.epoch)
+      return false
+    return snapshot.followSnapshot ? sameFollowIdentity(follow, snapshot.followSnapshot) : !follow
+  }
+  function sameFollowStatusRequest(request) {
+    var snapshot = request.followSnapshot, current = sessions[request.ref]
+    return sameFollowIdentity(followedTasks[request.ref], snapshot) && snapshot.computerId === request.ref && !!current &&
+      current.computer_id === request.ref && current.trust_state === "verified" &&
+      current.endpoint_id === snapshot.endpointId && current.binding_revision === snapshot.bindingRevision &&
+      current.authorization_generation === snapshot.authorizationGeneration && current.controller_epoch === snapshot.epoch
+  }
+  function clearDeniedTarget(snapshot, followSnapshot) {
+    if (!snapshot) return
+    if (followSnapshot && sameFollowIdentity(followedTasks[snapshot.computerId], followSnapshot))
+      unfollowTask(snapshot.computerId)
+    for (var i = 0; i < pendingNotices.length; i++)
+      if (sameTargetIdentity(pendingNotices[i], snapshot)) logDroppedFollowNotice(pendingNotices[i], "target-denied")
+    pendingNotices = pendingNotices.filter(function(notice) { return !sameTargetIdentity(notice, snapshot) })
+  }
+  function pollFollowedTasks() {
+    for (var id in followedTasks) {
+      var follow = followedTasks[id], session = sessions[id]
+      if (!session || session.trust_state !== "verified" || session.endpoint_id !== follow.endpointId ||
+          session.binding_revision !== follow.bindingRevision || session.authorization_generation !== follow.authorizationGeneration ||
+          session.controller_epoch !== follow.epoch) { unfollowTask(id); continue }
+      var kind = "follow-task:" + id
+      if (!readPending(kind)) requestRead(kind, ["operator-task-status", "--computer", id, "--epoch", follow.epoch, "--task", follow.taskRef], id, follow)
+    }
+  }
+  function clearTargetEpoch(computerId, oldEpoch) {
+    unfollowTask(computerId)
+    for (var i = 0; i < pendingNotices.length; i++)
+      if (pendingNotices[i].computerId === computerId) logDroppedFollowNotice(pendingNotices[i], "target-epoch-changed")
+    pendingNotices = pendingNotices.filter(function(notice) { return notice.computerId !== computerId })
+    var pin = humanFileTransfer
+    if (pin && pin.computerId === computerId && pin.epoch === oldEpoch && pin.phase === "running")
+      publishHumanFile(copyHumanPin(pin, "partial", "Not confirmed. ibara restarted on " + computerLabelFor(computerId) + " before this transfer finished. Look for the file in the Files tab before sending it again.", pin.jobId))
+  }
+  // Every session publication goes through here, so each computer carries its fleet state, actor
+  // and activity line, and what waits for your answer there (`waiting`, from fleet-attention), and
+  // sessions and computers always hold the same objects.
+  function publishSessions(next, rows) {
+    var decorated = ({}), waiting = waitingByComputer()
+    for (var id in next) {
+      var s = next[id]
+      decorated[id] = s && typeof s === "object" ? StatusModel.decorateSession(Object.assign({}, s, { waiting: waiting[id] || null })) : s
+    }
+    sessions = decorated
+    computers = (rows || computers).map(function(item) { return item && decorated[item.computer_id] }).filter(function(item) { return !!item })
+  }
+  function waitingByComputer() {
+    var out = ({})
+    for (var i = 0; i < approvals.length; i++) { var a = approvals[i].computer_id; out[a] = out[a] || { approvals: 0, questions: 0 }; out[a].approvals += 1 }
+    for (var j = 0; j < questions.length; j++) { var q = questions[j].computer_id; out[q] = out[q] || { approvals: 0, questions: 0 }; out[q].questions += 1 }
+    return out
+  }
+  // An approval or a question that comes or goes changes its computer's state everywhere.
+  function republishWaiting() {
+    var waiting = waitingByComputer()
+    for (var id in sessions) if (!sameValue(sessions[id] && sessions[id].waiting || null, waiting[id] || null)) { publishSessions(sessions); return }
+  }
+  onApprovalsChanged: Qt.callLater(root.republishWaiting)
+  onQuestionsChanged: Qt.callLater(root.republishWaiting)
+  readonly property var fleetCounts: StatusModel.fleetCounts(computers)
+  // The live task a computer reports to an observing operator: title and start, its latest step in
+  // plain words and its latest click (a fraction of the screen), bound to its task_ref.
+  function sanitizedActiveTask(value, ref) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    var taskRef = String(value.task_ref || ""), started = String(value.started_at || "")
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(taskRef) || taskRef !== String(ref || "")) return null
+    var step = value.last_step && typeof value.last_step === "object" ? value.last_step : null
+    var point = value.last_point && typeof value.last_point === "object" ? value.last_point : null
+    var px = point && typeof point.x === "number" ? point.x : NaN, py = point && typeof point.y === "number" ? point.y : NaN
+    return { task_ref: taskRef, title: StatusModel.clip(value.title, 160),
+      principal: /^[A-Za-z0-9_.:-]{1,64}$/.test(String(value.principal || "")) ? String(value.principal) : "",
+      state: /^[a-z_]{1,32}$/.test(String(value.state || "")) ? String(value.state) : "",
+      started_at: /^\d{4}-\d\d-\d\dT/.test(started) && isFinite(StatusModel.isoMs(started)) ? started : "",
+      last_step: step && typeof step.summary === "string" && step.summary.trim() ? { summary: StatusModel.clip(step.summary.trim(), 80), at: String(step.at || "") } : null,
+      last_point: point && px >= 0 && px <= 1 && py >= 0 && py <= 1 && typeof point.at === "string" && point.at ? { x: px, y: py, at: point.at } : null }
+  }
+  // The most recent finished task on a computer, or null.
+  function sanitizedLastTask(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    var ref = String(value.ref || "")
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(ref) || ["done", "failed", "cancelled", "blocked"].indexOf(value.outcome) === -1) return null
+    return { ref: ref, title: StatusModel.clip(value.title, 160), outcome: value.outcome, finished_at: String(value.finished_at || "") }
+  }
+  // Moments the console shows on a computer's picture: its agent clicked at (x, y), a fraction of
+  // the screen; its task finished done. Each fires once, when a later status read differs from
+  // the one before, so opening the console never replays an old click or Done.
+  signal agentClicked(string computerId, real x, real y)
+  signal taskDone(string computerId)
+  // An agent began its first task through this computer: its name and the computer it uses ("" when unknown).
+  signal agentConnected(string computerId, string name)
+  function noteStatusMoments(computerId, before, after) {
+    if (!before || before.last_task === undefined) return
+    var oldPoint = before.active_task && before.active_task.last_point, newPoint = after.active_task && after.active_task.last_point
+    if (newPoint && (!oldPoint || oldPoint.at !== newPoint.at)) agentClicked(computerId, newPoint.x, newPoint.y)
+    var oldRef = before.last_task ? before.last_task.ref : ""
+    if (after.last_task && after.last_task.ref !== oldRef && after.last_task.outcome === "done") taskDone(computerId)
+  }
+  // The first agent to begin a task here: a toast names it and the computer it is using, whose
+  // card lights up once. The computer is the one whose running task started last.
+  function announceFirstAgent() {
+    var best = null
+    for (var i = 0; i < computers.length; i++) {
+      var task = computers[i] && computers[i].active_task
+      if (task && (!best || String(task.started_at) > String(best.active_task.started_at))) best = computers[i]
+    }
+    var principal = best ? String(best.active_task.principal || "") : ""
+    var name = principal.indexOf("@") > 0 ? principal : principal ? "An agent from " + principal : "An agent"
+    var computerId = best ? String(best.computer_id) : ""
+    actionNotice = name + " connected." + (computerId ? " It can use " + computerLabelFor(computerId) + "." : "")
+    agentConnected(computerId, name)
+  }
+
+  // Console routes. The properties let a console created after the request open in the right place.
+  property string requestedRoute: "fleet"
+  property string requestedComputerId: ""
+  property int routeSerial: 0
+  signal openComputerRequested(string computerId)
+  signal openFleetRequested()
+  signal openAddRequested()
+  signal openShareRequested()
+  function requestRoute(route, computerId) {
+    requestedRoute = route
+    requestedComputerId = computerId
+    routeSerial += 1
+    dismissNotice()
+  }
+  function openComputer(computerId) {
+    var id = String(computerId || "")
+    if (!selectComputer(id)) return false
+    scopeComputer(id)
+    requestRoute("computer", id)
+    openComputerRequested(id)
+    return true
+  }
+  function openFleet() {
+    clearSelectedComputer()
+    scopeComputer("")
+    requestRoute("fleet", "")
+    openFleetRequested()
+  }
+  function openAdd() {
+    clearSelectedComputer()
+    scopeComputer("")
+    requestRoute("add", "")
+    openAddRequested()
+  }
+  // Share This Computer: invites for friends, made on this computer's own console.
+  function openShare() {
+    clearSelectedComputer()
+    scopeComputer("")
+    requestRoute("share", "")
+    openShareRequested()
+  }
+  function dismissNotice() {
+    actionNotice = ""
+    actionError = ""
+  }
+
+  // Reads and actions for one computer go over its pairing route (`--computer ID --epoch E`).
+  // Switching scope drops every list that belonged to the last one, then shows what the new
+  // computer's tabs last read (see scopedCache) while its tabs read again.
+  property string scopedComputerId: ""
+  property int scopeGeneration: 0
+  readonly property var scopedReadKinds: ["tasks", "task", "artifacts", "procedures", "procedure", "health", "logs", "access", "computer-settings"]
+  function scopeComputer(computerId) {
+    var id = String(computerId || "")
+    if (id && !sessions[id]) return false
+    if (id === scopedComputerId) return true
+    scopedComputerId = id
+    scopeGeneration += 1
+    readQueue = readQueue.filter(function(request) { return !request.scoped })
+    var errors = Object.assign({}, readErrors)
+    for (var i = 0; i < scopedReadKinds.length; i++) delete errors[scopedReadKinds[i]]
+    readErrors = errors
+    for (var k = 0; k < cachedReadKinds.length; k++) setScopedValue(cachedReadKinds[k], emptyScopedValue(cachedReadKinds[k]))
+    selectedTask = null; selectedTaskDetail = null; selectedTaskDetailRef = ""; selectedTaskDetailObservedAt = ""
+    selectedTaskRef = ""; selectedTaskLoading = false
+    selectedProcedure = null; selectedProcedureRef = ""; selectedProcedureLoading = false
+    selectedArtifactRef = ""
+    scopedReadAt = ({})
+    if (id) restoreScoped(id)
+    return true
+  }
+
+  // ---- each computer's last tab data. Coming back to a computer shows what its tabs last read
+  // at once, with its age (scopedReadAt), while the tabs read again in the background. Memory only.
+  // An entry holds only while the computer keeps the endpoint, binding revision and authorization
+  // generation it was read under. A refusal or failed read drops it, a computer that leaves the
+  // directory is dropped, and clearProtectedViews drops them all.
+  readonly property var cachedReadKinds: ["tasks", "artifacts", "procedures", "health", "logs", "access", "computer-settings"]
+  property var scopedCache: ({})
+  property var scopedReadAt: ({})
+  function cacheIdentity(computerId) {
+    var s = sessions[String(computerId || "")]
+    return s && s.trust_state === "verified" && s.endpoint_id ? [s.endpoint_id, s.binding_revision, s.authorization_generation].join("|") : ""
+  }
+  function emptyScopedValue(kind) {
+    return kind === "health" ? ({}) : kind === "access" ? null : []
+  }
+  function scopedValue(kind) {
+    return kind === "tasks" ? tasks : kind === "artifacts" ? artifacts : kind === "procedures" ? procedures
+      : kind === "health" ? health : kind === "logs" ? logLines : kind === "access" ? accessTable : computerSettings
+  }
+  // A value put back marks its list loaded; an empty value marks it not loaded yet.
+  function setScopedValue(kind, value, loaded) {
+    if (kind === "tasks") { tasks = value; tasksLoaded = loaded === true }
+    else if (kind === "artifacts") { artifacts = value; artifactsLoaded = loaded === true }
+    else if (kind === "procedures") { procedures = value; proceduresLoaded = loaded === true }
+    else if (kind === "health") health = value
+    else if (kind === "logs") logLines = value
+    else if (kind === "access") accessTable = value
+    else if (kind === "computer-settings") computerSettings = value
+  }
+  function rememberScoped(kind) {
+    var id = scopedComputerId, identity = cacheIdentity(id)
+    if (!id || !identity || cachedReadKinds.indexOf(kind) === -1) return
+    var at = Date.now()
+    var entry = scopedCache[id] && scopedCache[id].identity === identity ? scopedCache[id] : { identity: identity, kinds: ({}) }
+    var kinds = Object.assign({}, entry.kinds)
+    kinds[kind] = { value: scopedValue(kind), at: at }
+    var cache = Object.assign({}, scopedCache)
+    cache[id] = { identity: identity, kinds: kinds }
+    scopedCache = cache
+    var ages = Object.assign({}, scopedReadAt)
+    ages[kind] = at
+    scopedReadAt = ages
+  }
+  function restoreScoped(computerId) {
+    var entry = scopedCache[computerId]
+    if (!entry) return
+    if (entry.identity !== cacheIdentity(computerId)) { forgetComputerCaches(computerId); return }
+    var ages = ({})
+    for (var kind in entry.kinds) {
+      setScopedValue(kind, entry.kinds[kind].value, true)
+      ages[kind] = entry.kinds[kind].at
+    }
+    scopedReadAt = ages
+  }
+  // A read that failed shows its error, never data from before it.
+  function forgetScopedKind(computerId, kind) {
+    if (computerId === scopedComputerId) {
+      setScopedValue(kind, emptyScopedValue(kind))
+      if (scopedReadAt[kind]) { var ages = Object.assign({}, scopedReadAt); delete ages[kind]; scopedReadAt = ages }
+    }
+    var entry = scopedCache[computerId]
+    if (!entry || !entry.kinds[kind]) return
+    var kinds = Object.assign({}, entry.kinds)
+    delete kinds[kind]
+    var cache = Object.assign({}, scopedCache)
+    cache[computerId] = { identity: entry.identity, kinds: kinds }
+    scopedCache = cache
+  }
+  function forgetComputerCaches(computerId) {
+    var id = String(computerId || "")
+    if (scopedCache[id]) { var cache = Object.assign({}, scopedCache); delete cache[id]; scopedCache = cache }
+    if (remoteFileCache[id]) { var files = Object.assign({}, remoteFileCache); delete files[id]; remoteFileCache = files }
+  }
+  // Entries for computers no longer in the directory, or read under another identity, go.
+  function pruneComputerCaches() {
+    var id
+    for (id in scopedCache) if (scopedCache[id].identity !== cacheIdentity(id)) forgetComputerCaches(id)
+    for (id in remoteFileCache) if (remoteFileCache[id].identity !== fileCacheIdentity(id)) forgetComputerCaches(id)
+  }
+  // A computer's command line over its pairing route, or null while ibara has no connection to it yet.
+  function computerArgs(command, computerId, rest) {
+    var id = String(computerId || ""), s = sessions[id]
+    if (!s || s.trust_state !== "verified" || !s.controller_epoch) return null
+    return [String(command), "--computer", id, "--epoch", String(s.controller_epoch)].concat(rest || [])
+  }
+  // A read for the computer in scope. One asked for before its connection is up waits for it.
+  function requestScopedRead(kind, command, rest, ref) {
+    var id = scopedComputerId, generation = scopeGeneration
+    if (!id) return
+    var args = computerArgs(command, id, rest)
+    if (args) { requestRead(kind, args, ref, null, { id: id, generation: generation }); return }
+    whenConnected(id, function() {
+      if (root.scopedComputerId === id && root.scopeGeneration === generation) root.requestScopedRead(kind, command, rest, ref)
+    }, function(message) {
+      if (root.scopedComputerId !== id || root.scopeGeneration !== generation) return
+      var errors = Object.assign({}, root.readErrors)
+      errors[kind] = message
+      root.readErrors = errors
+    })
+  }
+  // A scoped reply must come from the scope that asked and name that computer and its current connection.
+  function scopedReplyCurrent(scope, parsed) {
+    var session = sessions[scope.id], data = parsed.data || ({})
+    return !!scope && scope.generation === scopeGeneration && scope.id === scopedComputerId && !!session &&
+      data.computer_id === scope.id && !!session.controller_epoch && data.controller_epoch === session.controller_epoch
+  }
+
+  // Local file choice runs the desktop chooser through ibarad, outside Quickshell and off
+  // the action lane. Choosing nothing leaves everything as it was.
+  property bool picking: false
+  property string pickKind: ""
+  property string pickRequestId: ""
+  property int pickSequence: 0
+  property var pickedFile: null
+  property var pickedFolder: null
+  // Where files from other computers are saved: the console's Download folder setting, else ~/Downloads.
+  readonly property string downloadFolder: humanFolder(String(consoleSetting("download_folder", "") || "")) || humanFolder(String(Quickshell.env("HOME") || "") + "/Downloads")
+  function pickLocal(kind) {
+    if (picking) return false
+    pickSequence += 1
+    pickKind = kind
+    pickRequestId = "pick-" + pickSequence
+    picking = true
+    daemonSend(pickRequestId, [kind], { kind: "pick" })
+    return true
+  }
+  function pickLocalFile() { return pickLocal("pick-file") }
+  function pickLocalFolder() { return pickLocal("pick-folder") }
+  function clearPickedFolder() { pickedFolder = null }
+  function consumePick(text) {
+    picking = false
+    try {
+      var parsed = StatusModel.parseEnvelope(text)
+      if (parsed.request_id !== pickRequestId) return
+      if (parsed.error) { actionError = String(parsed.error.message || parsed.error.code || "The file chooser did not open."); return }
+      var data = parsed.data || ({})
+      if (data.picked !== true) return
+      var chosen = String(data.path || "")
+      if (!humanAbsolutePath(chosen) || humanBaseName(chosen) !== String(data.name || "")) throw new Error("The file chooser returned an unusable path.")
+      var parent = chosen.substring(0, chosen.lastIndexOf("/")) || "/"
+      if (pickKind === "pick-folder") { pickedFolder = { path: chosen, name: String(data.name), folder: parent }; return }
+      if (typeof data.size !== "number" || !isFinite(data.size) || data.size < 0) throw new Error("The file chooser returned no file size.")
+      pickedFile = { path: chosen, name: String(data.name), folder: parent, size: data.size }
+    } catch (error) {
+      actionError = StatusModel.clip(error, 200)
+    }
+  }
+
+  // This session's transfers, newest first. Each follows one human-file pin from start to receipt.
+  property var fileTransfers: []
+  property int transferSequence: 0
+  function syncTransfer(pin) {
+    if (!pin || !pin.transferId) return
+    var phase = String(pin.phase || "")
+    var state = phase === "running" ? "running" : (phase === "verified" || phase === "verified-collected") ? "verified" : "failed"
+    var receipt = pin.receipt || null
+    var entry = {
+      id: pin.transferId, computerId: pin.computerId, direction: pin.direction, name: humanBaseName(pin.remote),
+      rootId: pin.rootId, remote: pin.remote, local: pin.local, state: state,
+      bytes: receipt ? receipt.size : 0, total: receipt ? receipt.size : Number(pin.total || 0),
+      jobId: pin.jobId || "", error: state === "failed" ? String(pin.notice || "") : "",
+      // Retry never repeats an uncertain upload: it resumes the retained job, or sends again only
+      // when nothing started. Downloads never overwrite, so they may always run again.
+      retryable: state === "failed" && phase !== "revoked" &&
+        (pin.direction === "receive" || phase === "failed" || (phase === "partial" && !!pin.jobId)),
+      openWhenDone: pin.openWhenDone === true
+    }
+    var list = fileTransfers.filter(function(item) { return item.id !== entry.id })
+    fileTransfers = [entry].concat(list).slice(0, 20)
+  }
+  function transferTotal(kind, local, remote) {
+    if (kind !== "human-file-receive") return pickedFile && pickedFile.path === local ? pickedFile.size : 0
+    var name = humanBaseName(remote)
+    for (var i = 0; i < remoteFileEntries.length; i++)
+      if (remoteFileEntries[i].name === name && typeof remoteFileEntries[i].size === "number") return remoteFileEntries[i].size
+    return 0
+  }
+  function sendPickedFile(computerId, rootId, saveAsName, remoteDirectory) {
+    var file = pickedFile
+    if (!file) { actionError = "Choose a file first."; return false }
+    var name = String(saveAsName || file.name)
+    if (!humanFileSegment(name)) { actionError = "Choose another name: it cannot start with a dot or a dash, or contain a slash."; return false }
+    var folder = humanRemoteDirectory(remoteDirectory || ".")
+    if (folder === "") { actionError = "That folder is not one this computer allows."; return false }
+    return beginHumanFile("human-file-send", computerId, rootId, folder === "." ? name : folder + "/" + name, file.path, "", "", false)
+  }
+  function getRemoteFile(computerId, rootId, remotePath) {
+    var chosen = !!pickedFolder
+    var local = humanReceiveLocal(chosen ? pickedFolder.path : downloadFolder, humanBaseName(remotePath))
+    if (!local) { actionError = "The download folder is not usable. Choose another folder."; return false }
+    return beginHumanFile("human-file-receive", computerId, rootId, remotePath, local, "", "", chosen)
+  }
+  function retryTransfer(t) {
+    var id = String(t && typeof t === "object" ? t.id : t || ""), entry = null
+    for (var i = 0; i < fileTransfers.length; i++) if (fileTransfers[i].id === id) entry = fileTransfers[i]
+    if (!entry || entry.state !== "failed" || !entry.retryable) return false
+    if (entry.computerId !== remoteFileComputerId) { actionError = "Open this computer's Files tab to retry."; return false }
+    if (entry.direction === "send" && entry.jobId)
+      return beginHumanFile("human-file-resume", entry.computerId, entry.rootId, entry.remote, entry.local, entry.jobId, entry.id, false)
+    return beginHumanFile(entry.direction === "receive" ? "human-file-receive" : "human-file-send", entry.computerId, entry.rootId, entry.remote, entry.local, "", entry.id, entry.openWhenDone)
+  }
+  property var remoteFileRoots: []
+  property var remoteFileEntries: []
+  property string remoteFileComputerId: ""
+  property string remoteFileRootId: ""
+  property string remoteFileDirectory: "."
+  property int remoteFileGeneration: 0
+  property bool remoteFileListing: false
+  property bool remoteFileLoaded: false
+  property bool remoteFileEntriesLoaded: false
+  property string remoteFileError: ""
+  property var humanFileTransfer: null
+  property bool followHumanFile: false
+  property var pendingControl: null
+  // Listings and transfers stay bound to the computer, folder and names that started them.
+  function humanFileSegment(value) {
+    var text = String(value || "")
+    if (!text || text.length > 255) return false
+    if (text.charCodeAt(0) === 46 || text.charCodeAt(0) === 45) return false
+    for (var i = 0; i < text.length; i++) {
+      var code = text.charCodeAt(i)
+      if (code < 32 || code === 47 || code === 92) return false
+    }
+    return true
+  }
+  function humanRootId(value) {
+    var text = String(value || "")
+    return /^[a-z][a-z0-9_-]{0,63}$/.test(text) ? text : ""
+  }
+  function humanJobId(value) {
+    var text = String(value || "")
+    return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(text) ? text : ""
+  }
+  function humanRemoteDirectory(value) {
+    var text = String(value || "")
+    if (text === ".") return "."
+    if (!text || text.length > 512 || text.charAt(0) === "/") return ""
+    var parts = text.split("/")
+    for (var i = 0; i < parts.length; i++) if (!humanFileSegment(parts[i])) return ""
+    return text
+  }
+  function humanRemotePath(value) {
+    var text = String(value || "")
+    if (!text || text.length > 1024 || text.charAt(0) === "/") return ""
+    var slash = text.lastIndexOf("/")
+    var directory = slash < 0 ? "." : text.substring(0, slash)
+    var name = slash < 0 ? text : text.substring(slash + 1)
+    if (humanRemoteDirectory(directory) === "" || !humanFileSegment(name)) return ""
+    return directory === "." ? name : directory + "/" + name
+  }
+  function humanAbsolutePath(value) {
+    var text = String(value || "")
+    if (text.length < 2 || text.length > 4096 || text.charAt(0) !== "/" || text.indexOf("//") >= 0) return false
+    var parts = text.split("/")
+    for (var i = 1; i < parts.length; i++) {
+      if (!parts[i] || parts[i] === "." || parts[i] === "..") return false
+      for (var n = 0; n < parts[i].length; n++) if (parts[i].charCodeAt(n) < 32 || parts[i].charCodeAt(n) === 92) return false
+    }
+    return true
+  }
+  function humanFolder(value) {
+    var text = String(value || "")
+    if (text.length > 1 && text.charAt(text.length - 1) === "/") text = text.substring(0, text.length - 1)
+    return humanAbsolutePath(text) ? text : ""
+  }
+  function humanBaseName(value) {
+    var parts = String(value || "").split("/")
+    return parts.length ? parts[parts.length - 1] : ""
+  }
+  function humanReceiveLocal(folder, name) {
+    var parent = humanFolder(folder)
+    if (!parent || !humanFileSegment(name)) return ""
+    var local = parent + "/" + name
+    return humanAbsolutePath(local) && humanBaseName(local) === name ? local : ""
+  }
+  function remoteFileKind(op, computerId, generation) {
+    return "operator-files-" + op + ":" + computerId + "#gen=" + generation
+  }
+  function remoteFileKindOp(kind) {
+    var text = String(kind || "")
+    if (text.indexOf("operator-files-roots:") === 0) return "roots"
+    if (text.indexOf("operator-files-list:") === 0) return "list"
+    return ""
+  }
+  function remoteFileKindGeneration(kind) {
+    var match = String(kind || "").match(/#gen=(\d+)$/)
+    return match ? parseInt(match[1], 10) : -1
+  }
+  function remoteFileResponseCurrent(kind, ref) {
+    return remoteFileKindGeneration(kind) === remoteFileGeneration && String(ref || "") === remoteFileComputerId
+  }
+  function cancelQueuedFileReads() {
+    var queue = []
+    for (var i = 0; i < readQueue.length; i++) {
+      if (String(readQueue[i].kind).indexOf("operator-files-") !== 0) queue.push(readQueue[i])
+    }
+    readQueue = queue
+  }
+  function setStableFileError(op, computerId, message) {
+    var errors = Object.assign({}, readErrors)
+    var key = "operator-files-" + op + ":" + computerId
+    if (message) errors[key] = message
+    else delete errors[key]
+    readErrors = errors
+  }
+  function clearRemoteFiles() {
+    remoteFileGeneration += 1
+    remoteFileRoots = []
+    remoteFileEntries = []
+    remoteFileRootId = ""
+    remoteFileDirectory = "."
+    remoteFileListing = false
+    remoteFileLoaded = false
+    remoteFileEntriesLoaded = false
+    remoteFileError = ""
+    remoteFileReadAt = 0
+    remoteFileCache = ({})
+  }
+  // The Files tab's last listing per computer, as scopedCache keeps the other tabs': shown at once
+  // when you come back, then read again. It also holds only for the controller epoch it was read in.
+  property var remoteFileCache: ({})
+  property double remoteFileReadAt: 0
+  function fileCacheIdentity(computerId) {
+    var s = sessions[String(computerId || "")]
+    return cacheIdentity(computerId) && s.controller_epoch ? cacheIdentity(computerId) + "|" + s.controller_epoch : ""
+  }
+  function rememberRemoteFiles(computerId) {
+    var id = String(computerId || ""), identity = fileCacheIdentity(id)
+    if (!identity || id !== remoteFileComputerId) return
+    var cache = Object.assign({}, remoteFileCache)
+    cache[id] = { identity: identity, roots: remoteFileRoots, rootId: remoteFileRootId, directory: remoteFileDirectory,
+      entries: remoteFileEntriesLoaded ? remoteFileEntries : [], entriesLoaded: remoteFileEntriesLoaded, at: Date.now() }
+    remoteFileCache = cache
+    remoteFileReadAt = cache[id].at
+  }
+  function queueRemoteFileRead(op, computerId, args) {
+    remoteFileListing = true
+    cancelQueuedFileReads()
+    var kind = remoteFileKind(op, computerId, remoteFileGeneration)
+    requestRead(kind, args, computerId)
+    if (!readPending(kind)) {
+      remoteFileListing = false
+      remoteFileError = "Failed. The file list could not be requested."
+      setStableFileError(op, computerId, remoteFileError)
+    }
+  }
+  function listRemoteFileRoots(computerId) {
+    remoteFileGeneration += 1
+    remoteFileComputerId = String(computerId || "")
+    remoteFileRootId = ""
+    remoteFileDirectory = "."
+    remoteFileError = ""
+    remoteFileLoaded = false
+    remoteFileEntriesLoaded = false
+    remoteFileReadAt = 0
+    setStableFileError("roots", remoteFileComputerId, "")
+    setStableFileError("list", remoteFileComputerId, "")
+    var session = sessions[computerId]
+    if (denied || !session || !session.controller_epoch || session.trust_state !== "verified" || !session.endpoint_id || session.binding_revision === undefined || session.binding_revision === null) {
+      remoteFileListing = false
+      remoteFileRoots = []
+      remoteFileEntries = []
+      return
+    }
+    // Back on a computer: its last listing shows at once while the folder it shows is read again.
+    var cached = remoteFileCache[remoteFileComputerId]
+    if (cached && cached.identity === fileCacheIdentity(remoteFileComputerId)) {
+      remoteFileRoots = cached.roots
+      remoteFileLoaded = true
+      remoteFileRootId = cached.rootId
+      remoteFileDirectory = cached.directory
+      remoteFileEntries = cached.entries
+      remoteFileEntriesLoaded = cached.entriesLoaded
+      remoteFileReadAt = cached.at
+      if (cached.rootId) {
+        queueRemoteFileRead("list", computerId, ["operator-files", "--computer", computerId, "--epoch", session.controller_epoch, "--op", "files_list", "--root", cached.rootId, "--directory", cached.directory])
+        return
+      }
+    } else if (cached) {
+      forgetComputerCaches(remoteFileComputerId)
+    }
+    remoteFileListing = true
+    if (!remoteFileLoaded) { remoteFileRoots = []; remoteFileEntries = [] }
+    queueRemoteFileRead("roots", computerId, ["operator-files", "--computer", computerId, "--epoch", session.controller_epoch, "--op", "files_roots"])
+  }
+  function listRemoteFileDirectory(computerId, rootId, directory) {
+    var rootName = humanRootId(rootId)
+    var folder = humanRemoteDirectory(directory)
+    var session = sessions[computerId]
+    if (!rootName || folder === "" || String(computerId) !== remoteFileComputerId || denied || !session || !session.controller_epoch || session.trust_state !== "verified") return
+    remoteFileGeneration += 1
+    remoteFileListing = true
+    // Reading the folder already shown again keeps its entries on screen until the new ones arrive.
+    if (rootName !== remoteFileRootId || folder !== remoteFileDirectory) {
+      remoteFileEntries = []
+      remoteFileEntriesLoaded = false
+      remoteFileReadAt = 0
+    }
+    remoteFileRootId = rootName
+    remoteFileDirectory = folder
+    remoteFileError = ""
+    setStableFileError("list", computerId, "")
+    queueRemoteFileRead("list", computerId, ["operator-files", "--computer", computerId, "--epoch", session.controller_epoch, "--op", "files_list", "--root", rootName, "--directory", folder])
+  }
+  function humanFileCommand(kind) {
+    if (kind === "human-file-receive") return "operator-file-receive"
+    if (kind === "human-file-resume") return "operator-file-resume"
+    return "operator-file-send"
+  }
+  function beginHumanFile(kind, computerId, rootId, remote, local, jobId, transferId, openWhenDone) {
+    if (mutating || denied) return false
+    if (remoteFileComputerId === String(computerId) && remoteFileError.indexOf("Revoked") === 0) return false
+    var session = sessions[computerId]
+    var rootName = humanRootId(rootId)
+    var remotePath = humanRemotePath(remote)
+    var localPath = humanAbsolutePath(local) ? String(local) : ""
+    var retained = humanJobId(jobId)
+    if (!session || String(computerId) !== remoteFileComputerId || !session.controller_epoch || session.trust_state !== "verified" || !session.endpoint_id || session.binding_revision === undefined || session.binding_revision === null) return false
+    if (!rootName || !remotePath || !localPath) return false
+    if (kind === "human-file-resume" && !retained) return false
+    if (kind === "human-file-receive" && humanBaseName(localPath) !== humanBaseName(remotePath)) return false
+    var current = humanFileTransfer
+    if (kind === "human-file-send" && current && current.phase === "partial" && current.computerId === String(computerId) && current.rootId === rootName && current.remote === remotePath) return false
+    if (kind === "human-file-resume" && current && current.jobId === retained && (current.computerId !== String(computerId) || current.rootId !== rootName || current.remote !== remotePath || current.local !== localPath)) return false
+    var pin = {
+      phase: "running",
+      notice: "In progress. Transferring " + remotePath + " for computer " + computerId + ", approved folder " + rootName + ", local " + localPath + ". This has not finished.",
+      computerId: String(computerId), rootId: rootName, remote: remotePath, local: localPath,
+      jobId: kind === "human-file-resume" ? retained : "",
+      epoch: String(session.controller_epoch), endpointId: String(session.endpoint_id),
+      bindingRevision: session.binding_revision, authorizationGeneration: session.authorization_generation,
+      follow: followHumanFile,
+      transferId: String(transferId || "") || "transfer-" + (++transferSequence),
+      direction: kind === "human-file-receive" ? "receive" : "send",
+      total: transferTotal(kind, localPath, remotePath), openWhenDone: openWhenDone === true
+    }
+    var args = [humanFileCommand(kind), "--computer", pin.computerId, "--epoch", pin.epoch, "--root", pin.rootId, "--remote", pin.remote, "--local", pin.local]
+    if (kind === "human-file-resume") args.push("--job", retained)
+    humanFileTransfer = pin
+    startHelper(kind, args)
+    if (pendingMutation !== kind) {
+      publishHumanFile(copyHumanPin(pin, "failed", "Failed. The transfer did not start. Nothing was verified.", pin.jobId))
+      return false
+    }
+    syncTransfer(pin)
+    return true
+  }
+  function argAfter(args, name) {
+    var at = args.indexOf(name)
+    return at >= 0 && at + 1 < args.length ? String(args[at + 1]) : ""
+  }
+  function remoteFileRevoked(parsed) {
+    var error = parsed && parsed.error ? parsed.error : ({})
+    var code = String(error.code || "")
+    var message = String(error.message || "")
+    return !!parsed && (parsed.connection === "unauthorized" ||
+      ["UNAUTHORIZED", "PERMISSION_DENIED", "AUTH_REQUIRED", "GRANT_REVOKED", "IDENTITY_MISMATCH"].indexOf(code) !== -1 ||
+      /revok|no longer approved|grant unavailable|identity changed/i.test(message))
+  }
+  function humanFileReceipt(data) {
+    var size = data ? data.size_bytes : null
+    var sha = String(data && data.sha256 || "")
+    if (typeof size !== "number" || !isFinite(size) || Math.floor(size) !== size || size < 0 || size > 500 * 1000 * 1000) return null
+    if (!/^[a-f0-9]{64}$/.test(sha)) return null
+    return { size: size, sha: sha }
+  }
+  function humanJobFromMessage(message) {
+    var match = String(message || "").match(/Upload ([A-Za-z0-9][A-Za-z0-9_.:-]{0,127}) is partial or uncertain/)
+    return match && humanJobId(match[1]) ? match[1] : ""
+  }
+  function computerLabelFor(computerId) {
+    var session = sessions[String(computerId || "")]
+    return session && session.label ? String(session.label) : "this computer"
+  }
+  // A computer that reports no display has nothing to preview yet; ibara keeps asking.
+  readonly property string noDisplayNotice: "This computer has no display yet. ibara shows its screen once one appears."
+  // A followed task's name for a notification: its title when the computer still reports it.
+  function followedTaskName(session, taskRef) {
+    var task = session && session.active_task
+    return task && task.task_ref === taskRef && task.title ? "\u201c" + String(task.title) + "\u201d" : "The task you follow"
+  }
+  // A failure message in plain English, naming the computer it came from.
+  function plainError(message, computerId, retrying) {
+    var session = sessions[String(computerId || "")]
+    return StatusModel.plainError(message, session && session.label ? String(session.label) : "", retrying === true)
+  }
+  function publishHumanFile(next) {
+    next.notice = StatusModel.clip(next.notice, 800)
+    humanFileTransfer = next
+    syncTransfer(next)
+  }
+  function copyHumanPin(pin, phase, notice, jobId) {
+    return {
+      phase: phase, notice: notice, jobId: jobId || "",
+      computerId: pin.computerId, rootId: pin.rootId, remote: pin.remote, local: pin.local,
+      epoch: pin.epoch, endpointId: pin.endpointId, bindingRevision: pin.bindingRevision,
+      authorizationGeneration: pin.authorizationGeneration, follow: pin.follow === true,
+      transferId: pin.transferId || "", direction: pin.direction || "", total: Number(pin.total || 0), openWhenDone: pin.openWhenDone === true
+    }
+  }
+  function settleHumanFile(kind, parsed, outcome) {
+    var pin = humanFileTransfer
+    if (!pin || pin.phase !== "running" || String(kind).indexOf("human-file-") !== 0) return
+    if (outcome === "unmatched" || outcome === "stale-access" || outcome === "unreadable") {
+      publishHumanFile(copyHumanPin(pin, "partial", "Not confirmed. ibara couldn't check that " + pin.remote + " reached " + computerLabelFor(pin.computerId) + ". Look for it in the Files tab before sending it again." + (pin.jobId ? " Use Retry to finish it." : ""), pin.jobId))
+      return
+    }
+    if (!parsed || parsed.error || outcome === "error") {
+      var message = String(parsed && parsed.error ? (parsed.error.message || parsed.error.code || "The transfer failed.") : "The transfer failed.")
+      var phase = remoteFileRevoked(parsed) ? "revoked" : (parsed && parsed.error && (parsed.error.retry_safe === false || /partial|uncertain|reply was lost|before repeating|do not repeat|inspect the target|inspect its status/i.test(message)) ? "partial" : "failed")
+      var mentioned = humanJobFromMessage(message)
+      var job = mentioned && (!pin.jobId || mentioned === pin.jobId) ? mentioned : (phase === "partial" && pin.jobId && !mentioned ? pin.jobId : "")
+      // ibarad names the job in its own words; the job travels in the entry, and Retry uses it.
+      message = message.replace(/^Upload [A-Za-z0-9][A-Za-z0-9_.:-]{0,127} is partial or uncertain\. Inspect its status; resume explicitly only after verifying original source and destination\. ?/, "")
+      var notice = "Failed. Nothing was sent or saved. " + message
+      if (phase === "revoked") notice = "Your access to " + computerLabelFor(pin.computerId) + " changed, so ibara stopped checking this transfer. The Access tab shows who can use " + computerLabelFor(pin.computerId) + "."
+      else if (phase === "partial") notice = "Not confirmed. " + message + " Look for " + pin.remote + " in the Files tab before sending it again." + (job ? " Use Retry to finish it." : "")
+      publishHumanFile(copyHumanPin(pin, phase, notice, job))
+      return
+    }
+    var data = parsed.data || ({})
+    var receipt = humanFileReceipt(data)
+    var expected = kind === "human-file-receive" ? "verified-collected" : "verified"
+    var jobId = humanJobId(data.job_id)
+    var aligned = data.computer_id === pin.computerId && data.root_id === pin.rootId && data.remote_path === pin.remote &&
+      String(data.endpoint_id || "") === String(pin.endpointId) && String(data.binding_revision) === String(pin.bindingRevision) &&
+      (!data.controller_epoch || String(data.controller_epoch) === String(pin.epoch)) &&
+      (kind !== "human-file-receive" || data.local_path === pin.local) &&
+      (kind !== "human-file-resume" || jobId === pin.jobId) && !!pin.endpointId
+    if (data.state === expected && receipt && jobId && aligned) {
+      var settled = copyHumanPin(pin, expected, (expected === "verified" ? "Verified. Sent " : "Verified. Received ") + pin.remote + " for computer " + pin.computerId + ", folder " + pin.rootId + ", local " + (data.local_path || pin.local) + ". " + receipt.size + " bytes, sha256 " + receipt.sha + ". Job " + jobId + ".", jobId)
+      settled.receipt = receipt
+      publishHumanFile(settled)
+      // A download to a folder the user chose opens that folder once its bytes are verified.
+      if (expected === "verified-collected" && pin.openWhenDone && !openFolderProcess.running) {
+        openFolderProcess.command = ["xdg-open", pin.local.substring(0, pin.local.lastIndexOf("/")) || "/"]
+        openFolderProcess.running = true
+      }
+      var current = sessions[pin.computerId]
+      if (pin.follow && !denied && current && current.connection !== "unauthorized" && current.trust_state === "verified" &&
+          current.endpoint_id === pin.endpointId && current.binding_revision === pin.bindingRevision &&
+          current.authorization_generation === pin.authorizationGeneration)
+        queueNotice({ title: String(current.label || "ibara"),
+          body: (expected === "verified" ? "Sent " + pin.remote + " to " : "Received " + pin.remote + " from ") + String(current.label || "the computer") + ". ibara checked it.",
+          computerId: pin.computerId, endpointId: pin.endpointId, bindingRevision: pin.bindingRevision,
+          authorizationGeneration: pin.authorizationGeneration, epoch: pin.epoch })
+    } else
+      publishHumanFile(copyHumanPin(pin, "partial", "Not confirmed. What " + computerLabelFor(pin.computerId) + " reported for " + pin.rootId + "/" + pin.remote + " did not match what was sent. Look for it in the Files tab before sending it again.", pin.jobId))
+  }
+  function sanitizedFileRoots(value) {
+    if (!Array.isArray(value)) return null
+    var roots = []
+    var seen = ({})
+    for (var i = 0; i < value.length && roots.length < 100; i++) {
+      var id = value[i] && humanRootId(value[i].root_id)
+      if (!id || seen[id]) continue
+      seen[id] = true
+      roots.push({ root_id: id })
+    }
+    return value.length && !roots.length ? null : roots
+  }
+  function sanitizedFileEntries(value) {
+    if (!Array.isArray(value)) return null
+    var entries = []
+    for (var i = 0; i < value.length && entries.length < 100; i++) {
+      var item = value[i]
+      if (!item || (item.kind !== "file" && item.kind !== "directory") || !humanFileSegment(item.name)) continue
+      // Size and change time only when the controller reports them; nothing is guessed.
+      var size = typeof item.size === "number" && isFinite(item.size) && item.size >= 0 && Math.floor(item.size) === item.size ? item.size : null
+      var modified = typeof item.modified === "string" && item.modified.length <= 40 && isFinite(StatusModel.isoMs(item.modified)) ? item.modified : ""
+      entries.push({ name: String(item.name), kind: item.kind, size: size, modified: modified })
+    }
+    return value.length && !entries.length ? null : entries
+  }
+  function discardRemoteFileRead(kind, ref, notice) {
+    if (!remoteFileResponseCurrent(kind, ref)) return
+    remoteFileListing = false
+    remoteFileError = StatusModel.clip(notice || "Failed. This file list no longer matches the current request. Refresh the folder and try again.", 300)
+    setStableFileError(remoteFileKindOp(kind) || "list", ref, remoteFileError)
+    remoteFileEntries = []
+    remoteFileEntriesLoaded = false
+    if (remoteFileKindOp(kind) === "roots") {
+      remoteFileRoots = []
+      remoteFileLoaded = false
+    }
+  }
+  function fileSessionMatches(request, parsed, result) {
+    var session = sessions[request.ref]
+    var data = parsed.data || ({})
+    if (!session || !result || !remoteFileResponseCurrent(request.kind, request.ref)) return false
+    return data.computer_id === request.ref && argAfter(request.args, "--computer") === String(request.ref) &&
+      argAfter(request.args, "--epoch") === String(session.controller_epoch) &&
+      String(data.endpoint_id) === String(session.endpoint_id) && String(data.binding_revision) === String(session.binding_revision) &&
+      String(data.controller_epoch) === String(session.controller_epoch) &&
+      String(result.endpoint_id) === String(session.endpoint_id) && String(result.controller_epoch) === String(session.controller_epoch) &&
+      String(result.authorization_generation) === String(session.authorization_generation)
+  }
+  function applyRemoteFileRead(request, parsed) {
+    if (!remoteFileResponseCurrent(request.kind, request.ref)) return
+    var op = remoteFileKindOp(request.kind)
+    var generation = remoteFileGeneration
+    try {
+    if (parsed.error) {
+      var detail = String(parsed.error.message || parsed.error.code || "Remote files are unavailable.")
+      var revoked = remoteFileRevoked(parsed)
+      remoteFileError = StatusModel.clip((revoked ? "Revoked. Access no longer matches this computer. " : "Failed. ") + detail + (revoked ? " The list was cleared." : ""), 300)
+      setStableFileError(op || "list", request.ref, remoteFileError)
+      remoteFileEntries = []
+      remoteFileEntriesLoaded = false
+      if (revoked || op === "roots") {
+        remoteFileRoots = []
+        remoteFileLoaded = false
+      }
+      if (revoked) forgetComputerCaches(request.ref)
+      remoteFileReadAt = 0
+      return
+    }
+    var result = (parsed.data || ({})).result || ({})
+    if (!fileSessionMatches(request, parsed, result)) {
+      remoteFileError = "Failed. The file list no longer matches the selected computer. Refresh the folder and try again."
+      setStableFileError(op || "list", request.ref, remoteFileError)
+      remoteFileEntries = []
+      remoteFileEntriesLoaded = false
+      if (op === "roots") { remoteFileRoots = []; remoteFileLoaded = false }
+      return
+    }
+    if (op === "roots") {
+      var roots = sanitizedFileRoots(result.roots)
+      if (!roots) {
+        remoteFileRoots = []
+        remoteFileEntries = []
+        remoteFileLoaded = false
+        remoteFileEntriesLoaded = false
+        remoteFileError = "Failed. The list of shared folders was unreadable. Choose Refresh to try again."
+        setStableFileError("roots", request.ref, remoteFileError)
+        return
+      }
+      remoteFileRoots = roots
+      remoteFileLoaded = true
+      remoteFileError = ""
+      setStableFileError("roots", request.ref, "")
+      rememberRemoteFiles(request.ref)
+      return
+    }
+    var requestedRoot = argAfter(request.args, "--root")
+    var requestedDirectory = argAfter(request.args, "--directory")
+    if (requestedRoot !== remoteFileRootId || requestedDirectory !== remoteFileDirectory || result.root_id !== remoteFileRootId) {
+      remoteFileEntries = []
+      remoteFileEntriesLoaded = false
+      remoteFileError = "Failed. The listing that arrived was for another folder. Choose Refresh to load this one."
+      setStableFileError("list", request.ref, remoteFileError)
+      return
+    }
+    var entries = sanitizedFileEntries(result.entries)
+    if (!entries) {
+      remoteFileEntries = []
+      remoteFileEntriesLoaded = false
+      remoteFileError = "Failed. The folder listing was unreadable. Choose Refresh to try again."
+      setStableFileError("list", request.ref, remoteFileError)
+      return
+    }
+    remoteFileEntries = entries
+    remoteFileEntriesLoaded = true
+    remoteFileError = ""
+    setStableFileError("list", request.ref, "")
+    rememberRemoteFiles(request.ref)
+    } finally {
+      if (generation === remoteFileGeneration) remoteFileListing = false
+    }
+  }
+  property string selectedComputerId: ""
+  // The console publishes whether the open computer's Screen tab is showing; only then does
+  // the selected computer preview at selected quality.
+  property bool watchVisible: false
+  onWatchVisibleChanged: if (!watchVisible) previewQueue = previewQueue.filter(function(item) { return item.quality !== "selected" })
+  property var tasks: []
+  property var artifacts: []
+  property var procedures: []
+  property bool tasksLoaded: false
+  property bool artifactsLoaded: false
+  property bool proceduresLoaded: false
+  property var accessTable: null
+  // The scoped computer's health report (operator-health result) and its last log lines.
+  property var health: ({})
+  property var logLines: []
+  property string logsWhich: "ibara"
+  // The scoped computer's own settings (operator-settings), as sections.
+  property var computerSettings: []
+  property string selectedTaskRef: ""
+  property string selectedArtifactRef: ""
+  property string selectedProcedureRef: ""
+  property var selectedTask: null
+  property var selectedTaskDetail: null
+  property string selectedTaskDetailRef: ""
+  property string selectedTaskDetailObservedAt: ""
+  property bool selectedTaskLoading: false
+  property var selectedProcedure: null
+  property bool selectedProcedureLoading: false
+  property string connectionState: "loading"
+  property bool panelOpen: false
+  property bool quickOpen: false
+  property bool consoleOpen: false
+  property bool mutating: false
+  readonly property bool reading: activeReads.some(function(request) { return !!request })
+  // Four read lanes: a 15-computer fleet bootstraps and polls without starving what the person asked for.
+  property var activeReads: [null, null, null, null]
+  property var readQueue: []
+  property var readErrors: ({})
+  property int readSequence: 0
+  property int actionSequence: 0
+  property int generation: 0
+  property int failureCount: 0
+  property string lastError: ""
+  property string actionError: ""
+  property string pendingMutation: ""
+  property string actionRequestId: ""
+  property string actionNotice: ""
+  // ---- first run: the tailnet, adding computers, requests to use this one, and agents.
+  // Where ibara's releases are published: the same value as IBARA_BASE_URL in the core's
+  // packaging/release.env (packaging/release.sh refuses a release when they differ): the
+  // downloads of the newest GitHub release of MayberryDT/ibara.
+  readonly property string ibaraBaseUrl: "https://github.com/MayberryDT/ibara/releases/latest/download"
+  // The one place the console names ibara's install command.
+  readonly property string ibaraInstallCommand: ibaraBaseUrl ? "curl -fsSL " + ibaraBaseUrl + "/install | sh" : ""
+  // This plugin can arrive before the rest of ibara (from Omarchy's plugin marketplace).
+  // "package": the ibara package is not installed; "setup": it is, but `ibara setup` has not
+  // finished; "": ibara is here (or its background service simply isn't answering).
+  property string ibaraMissing: ""
+  function checkInstalled() { if (!installCheck.running) installCheck.running = true }
+  // Install ibara, or finish setting it up, in a terminal on this desktop; the console
+  // connects by itself once ibara's service answers (setup also restarts the shell once).
+  function installIbara() {
+    var command = ibaraMissing === "setup" ? "ibara setup" : ibaraInstallCommand
+    if (!command) return false
+    installLauncher.command = ["omarchy-launch-floating-terminal-with-presentation", command]
+    installLauncher.running = true
+    return true
+  }
+  // ibara is installed and set up here, but its background service isn't answering. Nothing is
+  // wrong with the computers, so each keeps its last known state; the console says so in one
+  // toast (Start ibara, when this desktop's service manager knows ibara's service, else the one
+  // command that starts it) and greys the wall. Set once the install check confirms ibara is here
+  // while the connection is down; cleared the moment it connects.
+  property bool daemonDown: false
+  property bool serviceStopped: false
+  property bool canStartIbara: false
+  // "", "starting", or "failed": Start ibara ran, and ibara still isn't answering.
+  property string startState: ""
+  readonly property string ibaraStartCommand: "ibara setup"
+  onServiceStoppedChanged: if (serviceStopped && !ibaraUnitCheck.running) ibaraUnitCheck.running = true
+  function startIbara() {
+    if (!canStartIbara || startState === "starting" || ibaraStarter.running) return false
+    startState = "starting"
+    ibaraStarter.running = true
+    return true
+  }
+  // ---- What's New: the notes of the ibara update installed last, shown once.
+  property var whatsNew: null
+  function loadWhatsNew() { if (!busy["whats-new"]) { setBusy("whats-new", "reading"); sideSend(["whats-new"], { busyKey: "whats-new" }) } }
+  function dismissWhatsNew() { whatsNew = null; sideSend(["whats-new-seen"], {}) }
+  // ---- Start without the disk password (`unattended-boot`): this computer's own switch on the
+  // Settings page. Changing it needs root and the disk password, so it runs `ibara unattended-boot`
+  // in a terminal (sudo asks once), and the switch follows once the change has happened.
+  property var unattendedBootSections: []
+  // The value asked for in the terminal, until the answer shows it (or ten minutes pass).
+  property var unattendedBootWanted: null
+  property double unattendedBootAskedAt: 0
+  function loadUnattendedBoot() { if (!busy["unattended-boot"]) { setBusy("unattended-boot", "reading"); sideSend(["unattended-boot"], { busyKey: "unattended-boot" }) } }
+  function setUnattendedBoot(on) {
+    var setting = StatusModel.findSetting(unattendedBootSections, "unattended_boot")
+    if (!setting || unattendedBootWanted !== null) return false
+    var command = "ibara unattended-boot " + (on ? "enable" : "disable")
+    if (on && !setting.available) { setSettingError("", "unattended_boot", "This computer can't start without its disk password; the line above says why."); return false }
+    setSettingError("", "unattended_boot", "")
+    unattendedBootWanted = on
+    unattendedBootAskedAt = Date.now()
+    setBusy("setting::unattended_boot", "terminal")
+    unattendedLauncher.command = ["omarchy-launch-floating-terminal-with-presentation", command]
+    unattendedLauncher.running = true
+    return true
+  }
+  function settleUnattendedBoot(message) {
+    unattendedBootWanted = null
+    setBusy("setting::unattended_boot", "")
+    if (message) setSettingError("", "unattended_boot", message)
+  }
+  // Lock the screen at sign-in: a file in this account's Omarchy hooks, so the console changes it
+  // at once (`unattended-boot-lock on|off`) and the answer is the new state of both switches.
+  function setSignInLock(on) {
+    var setting = StatusModel.findSetting(unattendedBootSections, "lock_at_sign_in")
+    if (!setting || busy["setting::lock_at_sign_in"]) return false
+    setSettingError("", "lock_at_sign_in", "")
+    setBusy("setting::lock_at_sign_in", "saving")
+    sideSend(["unattended-boot-lock", on ? "on" : "off"], { busyKey: "setting::lock_at_sign_in" })
+    return true
+  }
+  // This Computer back to its defaults: starting without the password goes first, since the lock
+  // stays while it is on.
+  function resetThisComputer() {
+    var boot = StatusModel.findSetting(unattendedBootSections, "unattended_boot"), lock = StatusModel.findSetting(unattendedBootSections, "lock_at_sign_in")
+    if (boot && boot.value) return setUnattendedBoot(false)
+    return lock && lock.value ? setSignInLock(false) : false
+  }
+  // Omarchy's own Tailscale install, the one its menu runs (Install › Service › Tailscale).
+  readonly property string tailscaleInstallCommand: "omarchy-install-service-tailscale"
+  // The directory has answered at least once, so an empty fleet is really empty.
+  property bool directoryLoaded: false
+  // The last tailnet read (StatusModel.tailnetView), null until one arrives.
+  property var tailnet: null
+  // Adds started here, by tailnet node: { node, requestId, code, mode, state, message, computerId,
+  // label, startedAt }. state: starting, waiting, canceling, paired, declined, expired, failed.
+  property var pairings: ({})
+  property var pairStatusAsked: ({})
+  readonly property bool pairingActive: {
+    for (var node in pairings) if (["starting", "waiting", "canceling"].indexOf(pairings[node].state) !== -1) return true
+    return false
+  }
+  signal pairingAdded(string node, string label)
+  // Requests from other computers to use this one, waiting for a person here.
+  property var pairRequests: []
+  property var pairAnswers: ({})
+  property var notifiedPairRequests: ({})
+  // The prompt that connects an agent (from ibara, `connect-prompt`), and whether any agent has
+  // begun a task through this computer yet.
+  property string connectPrompt: ""
+  property bool firstTaskDone: false
+  property int sideSequence: 0
+  readonly property bool tailscaleSigningIn: tailscaleUp.running
+  property int accessGeneration: 0
+  property int actionAccessGeneration: 0
+  property var actionScope: null
+  property double nowMs: Date.now()
+  property var pendingNotices: []
+
+  // Desktop notices go through the console's Notifications setting.
+  function queueNotice(notice) {
+    if (!consoleBool("notifications", true)) return
+    pendingNotices = pendingNotices.concat([notice])
+    drainNotices()
+  }
+  function drainNotices() {
+    if (notifyProcess.running || !pendingNotices.length) return
+    var queue = pendingNotices.slice()
+    var notice = queue.shift()
+    pendingNotices = queue
+    if (notice.computerId) {
+      var current = sessions[notice.computerId]
+      if (denied || !current || current.connection === "unauthorized" || current.trust_state !== "verified" || current.endpoint_id !== notice.endpointId ||
+          current.binding_revision !== notice.bindingRevision || current.authorization_generation !== notice.authorizationGeneration ||
+          !notice.epoch || current.controller_epoch !== notice.epoch) {
+        logDroppedFollowNotice(notice, "target-binding-or-policy")
+        Qt.callLater(root.drainNotices)
+        return
+      }
+    }
+    if (notice.trace)
+      console.info(root.notificationTracePrefix("notice-dispatch") +
+        " computer=" + root.notificationTraceToken(notice.trace.computerId) +
+        " task_ref=" + root.notificationTraceToken(notice.trace.taskRef) +
+        " state=" + root.notificationTraceState(notice.trace.state) + " verified=" + (notice.trace.verified === true ? "true" : "false") +
+        " notice=" + root.notificationTraceNotice(notice.trace.notice))
+    notifyProcess.command = ["notify-send", "-a", "ibara", notice.title, notice.body]
+    notifyProcess.running = true
+  }
+
+  // ibarad (the operator role) answers every console command over one Unix socket. A request
+  // carries the command's arguments and an id; the reply is a version-2 envelope that every
+  // handler below parses with StatusModel.parseEnvelope. Previews come back as events.
+  readonly property string daemonSocketPath: {
+    var dir = String(Quickshell.env("XDG_RUNTIME_DIR") || "")
+    return dir ? dir + "/ibara/ibarad.sock" : ""
+  }
+  readonly property string daemonAbsentMessage: "ibara isn't running on this computer."
+  // The live connection. Quickshell 0.3 keeps a failed socket and never retries it, so each
+  // attempt uses a fresh Socket from daemonSocketComponent.
+  property var daemonSocket: null
+  property bool daemonConnecting: false
+  property int daemonRetryMs: 500
+  // Requests awaiting an answer, by id: which handler takes it and whether it was written.
+  property var daemonPending: ({})
+  // Lines written once the connection opens, and failures handed to their handlers later.
+  property var daemonOutbox: []
+  property var daemonFailures: []
+  readonly property string pluginId: "io.zet.ibara"
+  readonly property int openRefreshMs: intSetting("openRefreshSec", 5, 2, 60) * 1000
+  readonly property int closedRefreshMs: intSetting("closedRefreshSec", 15, 5, 120) * 1000
+  // The controller reports holds_control only to the verified holder. Trust it only for the
+  // epoch that reported it and while the session is ready; a restart, rebinding or denial clears it.
+  function holdsControlOn(computerId) {
+    var s = sessions[String(computerId || "")]
+    return !!s && s.holds_control === true && s.connection === "ready" && !!s.controller_epoch && s.holds_control_epoch === s.controller_epoch
+  }
+  readonly property bool denied: connectionState === "unauthorized"
+
+  function localPath(url) {
+    var value = String(url || "")
+    if (value.indexOf("file://") === 0) value = value.substring(7)
+    try { return decodeURIComponent(value) } catch (error) { return value }
+  }
+
+  function setting(name, fallback) {
+    var value = settings ? settings[name] : undefined
+    return value === undefined || value === null ? fallback : value
+  }
+
+  function intSetting(name, fallback, minimum, maximum) {
+    var number = parseInt(String(setting(name, fallback)), 10)
+    if (!isFinite(number)) number = fallback
+    return Math.max(minimum, Math.min(maximum, number))
+  }
+
+  function applySettings(value) {
+    settings = value || ({})
+    releasePreviewLanes()
+    schedulePoll(panelOpen ? openRefreshMs : closedRefreshMs)
+  }
+
+  function setPanelOpen(value) {
+    setSurfaceOpen("quick", value)
+  }
+
+  function setSurfaceOpen(surface, value) {
+    if (surface === "quick") quickOpen = !!value
+    else if (surface === "console") consoleOpen = !!value
+    var wasOpen = panelOpen
+    panelOpen = quickOpen || consoleOpen
+    if (panelOpen && !wasOpen) refresh()
+    else schedulePoll(panelOpen ? openRefreshMs : closedRefreshMs)
+    if (panelOpen) { Qt.callLater(root.refreshComputerSessions); loadAttention() }
+    else closePreviews()
+    // Opening the console asks what happened while you were away and reads its settings again.
+    if (surface === "console" && consoleOpen) { loadAway(); loadConsoleSettings(); loadWhatsNew() }
+    if (surface === "console" && consoleOpen && scopedComputerId) {
+      if (!tasksLoaded && !readPending("tasks")) loadTasks()
+      if (!artifactsLoaded && !readPending("artifacts")) loadArtifacts()
+    }
+  }
+
+  // The request for one command line: its command, then its arguments as strings.
+  function daemonRequest(id, args) {
+    return { id: String(id), command: String(args[0] || ""), args: args.slice(1).map(function(value) { return String(value) }) }
+  }
+  // route.kind names the handler: action, read (with its lane), pick, preview or side.
+  function daemonSend(id, args, route) {
+    var request = daemonRequest(id, args)
+    var connected = !!daemonSocket && daemonSocket.connected
+    var pending = Object.assign({}, daemonPending)
+    pending[request.id] = Object.assign({}, route, { command: request.command, sent: connected })
+    daemonPending = pending
+    var line = JSON.stringify(request) + "\n"
+    if (connected) {
+      daemonSocket.write(line)
+      daemonSocket.flush()
+      return
+    }
+    daemonOutbox = daemonOutbox.concat([{ id: request.id, line: line }])
+    connectDaemon()
+  }
+  function forgetDaemonRequest(id) {
+    if (!daemonPending[id]) return
+    var pending = Object.assign({}, daemonPending)
+    delete pending[id]
+    daemonPending = pending
+  }
+  function connectDaemon() {
+    if (daemonConnecting || (daemonSocket && daemonSocket.connected)) return
+    daemonReconnect.stop()
+    if (!daemonSocketPath) { failDaemonRequests(); return }
+    if (daemonSocket) daemonSocket.destroy()
+    daemonConnecting = true
+    daemonSocket = daemonSocketComponent.createObject(root)
+    daemonSocket.connected = true
+  }
+  function scheduleDaemonReconnect() {
+    daemonReconnect.interval = daemonRetryMs
+    daemonReconnect.restart()
+    daemonRetryMs = Math.min(30000, daemonRetryMs * 2)
+  }
+  function daemonConnectionChanged(socket) {
+    if (socket !== daemonSocket) return
+    daemonConnecting = false
+    if (!socket.connected) {
+      failDaemonRequests()
+      scheduleDaemonReconnect()
+      noteDaemonDown()
+      return
+    }
+    daemonRetryMs = 500
+    var outbox = daemonOutbox, pending = Object.assign({}, daemonPending)
+    daemonOutbox = []
+    for (var i = 0; i < outbox.length; i++) {
+      if (!pending[outbox[i].id]) continue
+      pending[outbox[i].id] = Object.assign({}, pending[outbox[i].id], { sent: true })
+      socket.write(outbox[i].line)
+    }
+    daemonPending = pending
+    socket.flush()
+    // Back after it stopped: read everything again now rather than at the next backed-off poll.
+    var wasDown = daemonDown
+    daemonDown = false
+    serviceStopped = false
+    startState = ""
+    if (wasDown) Qt.callLater(function() { root.failureCount = 0; root.refresh(); root.loadAttention() })
+  }
+  function daemonConnectFailed(socket) {
+    if (socket !== daemonSocket || socket.connected) return
+    daemonConnecting = false
+    failDaemonRequests()
+    scheduleDaemonReconnect()
+    noteDaemonDown()
+  }
+  // Nothing answers on ibara's socket: the install check says whether ibara is missing or stopped.
+  function noteDaemonDown() {
+    daemonDown = true
+    if (!serviceStopped) checkInstalled()
+  }
+  // Every waiting request fails with a plain reason, as a lost reply always did. Handlers
+  // run later, never inside the call that sent the request.
+  function failDaemonRequests() {
+    var pending = daemonPending, failures = daemonFailures.slice()
+    daemonPending = ({})
+    daemonOutbox = []
+    for (var id in pending) failures.push({ id: id, route: pending[id] })
+    daemonFailures = failures
+    if (failures.length) Qt.callLater(root.flushDaemonFailures)
+  }
+  function flushDaemonFailures() {
+    var failures = daemonFailures
+    daemonFailures = []
+    for (var i = 0; i < failures.length; i++)
+      deliverDaemon(failures[i].route, failures[i].id, daemonFailure(failures[i].id, failures[i].route))
+  }
+  // A request that was never written did nothing; one written before the connection closed
+  // has an unknown outcome, so an action is not safe to repeat.
+  function daemonFailure(id, route) {
+    var sent = route.sent === true
+    var message = sent ? "ibara lost its connection to its background service before an answer came." : daemonAbsentMessage
+    if (route.kind === "preview") message += " ibara will try again."
+    else if (route.kind === "action") message += sent ? " It can't tell whether this finished; the computer's header and Activity tab show what changed." : " Nothing was done."
+    return { version: 2, request_id: id, command: route.command, target: "ibara",
+      observed_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), connection: sent ? "offline" : "missing-dependency",
+      desktop: null, owner: {}, capabilities: {}, stale: false, data: null,
+      error: { code: "DAEMON_UNAVAILABLE", message: message, retry_safe: !(sent && route.kind === "action") } }
+  }
+  function deliverDaemon(route, id, value) {
+    if (route.kind === "action") consumeAction(value)
+    else if (route.kind === "read") consumeRead(route.lane, value)
+    else if (route.kind === "pick") consumePick(value)
+    else if (route.kind === "side") consumeSide(route, value)
+    else if (route.kind === "preview") {
+      for (var lane = 0; lane < previewActive.length; lane++)
+        if (previewActive[lane] && previewActive[lane].request_id === id) { consumePreview(lane, value); return }
+    }
+  }
+  // One line from ibarad: a reply {id, envelope} or a preview event {event, computer_id, data}.
+  function consumeDaemonLine(line) {
+    var message
+    try { message = JSON.parse(line) } catch (error) { return }
+    if (!message || typeof message !== "object") return
+    var preview = message.event === "preview"
+    var envelope = preview ? message.data : message.envelope
+    var id = preview ? String(envelope && envelope.request_id || "") : String(message.id || "")
+    var route = daemonPending[id]
+    // A picture that lands after the console closed was written anyway; ibarad deletes it
+    // with every other file no session still shows.
+    if (!route) { if (preview && !panelOpen) releasePreviewFiles(); return }
+    forgetDaemonRequest(id)
+    // An oversized answer fails as it always did: its text is over the handler's parse limit.
+    var limit = (route.kind === "preview" ? 2 * 1024 * 1024 : 512 * 1024) + 1024
+    deliverDaemon(route, id, String(line).length > limit ? line : envelope)
+  }
+
+  // One action at a time on the action lane. `scope` ({id, generation}) marks an action for one
+  // computer: its answer reports only on that computer.
+  function startHelper(kind, args, scope) {
+    if (mutating) return
+    mutating = true
+    pendingMutation = kind
+    actionErrorFix = null
+    actionError = ""
+    actionNotice = ""
+    actionSequence += 1
+    actionRequestId = "mut-" + generation + "-" + actionSequence + "-" + kind
+    actionAccessGeneration = accessGeneration
+    actionScope = scope || null
+    daemonSend(actionRequestId, args, { kind: "action" })
+  }
+  // An action for one computer over its pairing route, on the action lane.
+  function startComputerAction(kind, command, computerId, rest) {
+    var id = String(computerId || ""), args = computerArgs(command, id, rest)
+    if (mutating) { actionError = "Wait for the current action to finish."; return false }
+    if (!args) { actionError = "ibara is still connecting to " + computerLabelFor(id) + ". Try again in a moment."; return false }
+    startHelper(kind, args, { id: id, generation: scopeGeneration })
+    return pendingMutation === kind
+  }
+
+  function readPending(kind) {
+    for (var active = 0; active < activeReads.length; active++)
+      if (activeReads[active] && activeReads[active].kind === kind) return true
+    for (var i = 0; i < readQueue.length; i++) if (readQueue[i].kind === kind) return true
+    return false
+  }
+
+  function requestRead(kind, args, ref, identitySnapshot, scope) {
+    if (denied) return
+    var errors = Object.assign({}, readErrors)
+    delete errors[kind]
+    readErrors = errors
+    var queue = readQueue.slice()
+    for (var i = queue.length - 1; i >= 0; i--) if (queue[i].kind === kind) queue.splice(i, 1)
+    var request = { kind: kind, args: args, ref: String(ref || ""), access: accessGeneration, scope: scope || null }
+    request.scoped = !!request.scope
+    if (String(kind).indexOf("follow-task:") === 0 && identitySnapshot)
+      request.followSnapshot = Object.assign({}, identitySnapshot)
+    if (String(kind).indexOf("session-status:") === 0 && identitySnapshot) {
+      request.sessionSnapshot = Object.assign({}, identitySnapshot, {
+        followSnapshot: identitySnapshot.followSnapshot ? Object.assign({}, identitySnapshot.followSnapshot) : null
+      })
+    }
+    // What the person asked for goes ahead of background session polling.
+    var background = /^(session-status|session-bootstrap|follow-task):/
+    var at = queue.length
+    if (!background.test(String(kind))) while (at > 0 && background.test(String(queue[at - 1].kind))) at--
+    queue.splice(at, 0, request)
+    readQueue = queue
+    drainReads()
+  }
+
+  function drainReads() {
+    if (!readQueue.length || denied) return
+    var lane = -1
+    for (var i = 0; i < activeReads.length; i++) if (!activeReads[i]) { lane = i; break }
+    if (lane < 0) return
+    var queue = readQueue.slice()
+    var request = queue.shift()
+    readQueue = queue
+    // A release still waiting when the console reopens could delete a fresh frame; the next close sends one.
+    if (request.access !== accessGeneration || (request.kind === "preview-release" && panelOpen)) { Qt.callLater(root.drainReads); return }
+    readSequence += 1
+    request.requestId = "read-" + readSequence + "-" + request.kind
+    var active = activeReads.slice()
+    active[lane] = request
+    activeReads = active
+    daemonSend(request.requestId, request.args, { kind: "read", lane: lane })
+    Qt.callLater(root.drainReads)
+  }
+
+  // Every refresh reads the directory and the requests to use this computer, then schedules the next.
+  function refresh() {
+    var cleared = Object.assign({}, sessions)
+    for (var id in cleared) if (cleared[id] && cleared[id].active_task_ref)
+      cleared[id] = Object.assign({}, cleared[id], { active_task_ref: "" })
+    publishSessions(cleared)
+    loadComputers()
+    // Requests to use this computer are checked on every refresh, open or closed, so the
+    // person here hears about one while the other screen still shows its code.
+    loadPairRequests()
+    pollClosedStatus()
+    schedulePoll(failureCount ? Math.min(60000, closedRefreshMs * failureCount) : panelOpen ? openRefreshMs : closedRefreshMs)
+  }
+  // The operator's own name for a verified computer, kept in this machine's private directory
+  // (the computer itself never learns it); the directory is re-read once the name is saved.
+  function renameComputer(computerId, label) {
+    var id = String(computerId || ""), name = String(label || "").trim()
+    if (!sessions[id] || sessions[id].trust_state !== "verified" || mutating) return false
+    if (!name || name.length > 128 || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(name)) {
+      actionError = "A computer name needs 1–128 characters on one line."
+      return false
+    }
+    startHelper("rename-computer", ["rename-computer", "--computer", id, "--label", name])
+    return true
+  }
+
+  function loadComputers() { requestRead("directory", ["directory"]) }
+  // Computers whose status stays fresh. The console's wall and list publish what is on screen
+  // (empty when hidden). The quick panel shows no pictures, only states, so while it alone is
+  // open every listed computer keeps its status current without any preview.
+  function statusComputerIds() {
+    if (consoleOpen) return visibleComputerIds
+    if (!quickOpen) return []
+    return computers.map(function(item) { return item.computer_id })
+  }
+  // Failed session bootstraps and denied-status re-checks retry per computer with
+  // jittered exponential backoff (5 s → 60 s), so refusing targets cannot fill the read lanes.
+  property var sessionRetry: ({})
+  function deferSessionRetry(computerId) {
+    var retry = Object.assign({}, sessionRetry), prior = retry[computerId]
+    var delay = Math.min(60000, prior ? prior.delay * 2 : 5000)
+    retry[computerId] = { delay: delay, until: Date.now() + Math.round(delay * (0.8 + Math.random() * 0.4)) }
+    sessionRetry = retry
+  }
+  function clearRetryState(computerId) {
+    if (sessionRetry[computerId]) { var retry = Object.assign({}, sessionRetry); delete retry[computerId]; sessionRetry = retry }
+    if (previewBackoff[computerId]) { var backoff = Object.assign({}, previewBackoff); delete backoff[computerId]; previewBackoff = backoff }
+  }
+  function refreshComputerSessions() {
+    // Nothing open: the bar's own polling (right after the directory answers, then each refresh).
+    if (!panelOpen) { pollClosedStatus(); return }
+    var wanted = statusComputerIds().slice()
+    if (selectedComputerId && wanted.indexOf(selectedComputerId) === -1) wanted.push(selectedComputerId)
+    var now = Date.now()
+    for (var i = 0; i < wanted.length; i++) {
+      var computer = sessions[wanted[i]]
+      if (!computer || computer.trust_state !== "verified" || (sessionRetry[computer.computer_id] && now < sessionRetry[computer.computer_id].until)) continue
+      if (!computer.controller_epoch && !readPending("session-bootstrap:" + computer.computer_id))
+        requestRead("session-bootstrap:" + computer.computer_id, ["operator-session", "--computer", computer.computer_id], computer.computer_id)
+      // A denied card stays blank until an authenticated status says access returned.
+      else if (computer.controller_epoch && computer.connection === "unauthorized" && !readPending("session-status:" + computer.computer_id))
+        requestRead("session-status:" + computer.computer_id, ["operator-status", "--computer", computer.computer_id, "--epoch", computer.controller_epoch],
+          computer.computer_id, sessionStatusSnapshot(computer.computer_id))
+    }
+  }
+  function selectComputer(computerId) {
+    var id = String(computerId || "")
+    for (var i = 0; i < computers.length; i++) {
+      if (computers[i].computer_id === id) {
+        if (selectedComputerId !== id) {
+          selectedComputerId = id
+          previewQueue = previewQueue.filter(function(item) { return item.quality !== "selected" })
+        }
+        Qt.callLater(root.refreshComputerSessions)
+        return true
+      }
+    }
+    return false
+  }
+  function clearSelectedComputer() {
+    selectedComputerId = ""
+    previewQueue = previewQueue.filter(function(item) { return item.quality !== "selected" })
+  }
+  function setComputerDisplay(computerId, displayId) {
+    var session = sessions[String(computerId || "")]
+    if (!session || session.trust_state !== "verified" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(String(displayId || ""))) return false
+    var updated = Object.assign({}, sessions)
+    updated[computerId] = Object.assign({}, session, { display_id: String(displayId), frame: null, frame_error: "Waiting for an authorized preview." })
+    publishSessions(updated)
+    previewGeneration += 1
+    previewQueue = []
+    return true
+  }
+  function takeControlFor(computerId) {
+    if (!selectComputer(computerId)) return false
+    var s = sessions[computerId]
+    if (holdsControlOn(computerId)) { actionError = "You already have control of this computer."; return false }
+    if (!s || s.interactive_control !== "available_if_exclusive" || !s.controller_epoch ||
+        !s.owner_name || !s.ownership_revision || mutating) {
+      actionError = mutating ? "Wait for the current action to finish." : "ibara is still reading who is using " + computerLabelFor(computerId) + ". Choose Take Control again in a moment."
+      return false
+    }
+    pendingControl = { computer_id: computerId, endpoint_id: s.endpoint_id,
+      binding_revision: s.binding_revision, controller_epoch: s.controller_epoch,
+      authorization_generation: s.authorization_generation }
+    startHelper("operator-take-control", ["operator-control", "--computer", computerId, "--epoch", s.controller_epoch,
+      "--op", "take_control", "--owner", s.owner_name, "--revision", s.ownership_revision])
+    return true
+  }
+  function handBackFor(computerId) {
+    if (!selectComputer(computerId)) return false
+    var s = sessions[computerId]
+    if (!s || s.interactive_control !== "available_if_exclusive" || !s.controller_epoch || !holdsControlOn(computerId) ||
+        !/^operator:/.test(String(s.owner_name || "")) || !s.ownership_revision || mutating) {
+      actionError = mutating ? "Wait for the current action to finish." : "You don't have control of " + computerLabelFor(computerId) + ", so there is nothing to hand back."
+      return false
+    }
+    pendingControl = { computer_id: computerId, endpoint_id: s.endpoint_id,
+      binding_revision: s.binding_revision, controller_epoch: s.controller_epoch,
+      authorization_generation: s.authorization_generation }
+    startHelper("operator-handback", ["operator-control", "--computer", computerId, "--epoch", s.controller_epoch,
+      "--op", "handback", "--owner", s.owner_name, "--revision", s.ownership_revision])
+    return true
+  }
+  // A restarted controller has a new epoch; bootstrap the session again so
+  // interactive control reflects the new controller.
+  function forgetControllerEpoch(computerId) {
+    var current = sessions[computerId]
+    if (!current) return
+    clearTargetEpoch(computerId, current.controller_epoch)
+    var updated = Object.assign({}, sessions)
+    updated[computerId] = Object.assign({}, current, { controller_epoch: "", interactive_control: "", holds_control: false })
+    publishSessions(updated)
+  }
+  // Wall cards and quick-panel rows show who holds each computer and its live task, so those
+  // computers re-read their authenticated status in rotation, each second (statusTick). One
+  // where something moves (an agent working, a person in control, a pause, something that needs
+  // you) is read about every second, up to eight per tick, and for 10 s after it settles, so its
+  // step line, clicks, approvals and Done arrive at once; the open computer too while it moves.
+  // The rest are read at most every 20 s, up to four per tick. One read per computer at a time.
+  // Denied and offline cards keep their own backoff paths.
+  property var statusPolledAt: ({})
+  // computerId → ms until which it is read at the fast pace; not bound.
+  property var statusFastUntil: ({})
+  readonly property int statusFastMs: 1000
+  readonly property int statusSlowMs: 20000
+  function statusMoving(s) {
+    var state = s && s.fleet_state
+    return state === "working" || state === "human" || state === "paused" || state === "attention"
+  }
+  // Reads one computer's status now and notes when (the open computer's and held ones' 5 s reads too).
+  function pollStatus(computerId) {
+    var s = sessions[computerId]
+    if (!s || s.trust_state !== "verified" || !s.controller_epoch || readPending("session-status:" + computerId)) return false
+    var polled = Object.assign({}, statusPolledAt)
+    polled[computerId] = Date.now()
+    statusPolledAt = polled
+    requestRead("session-status:" + computerId, ["operator-status", "--computer", computerId, "--epoch", s.controller_epoch], computerId, sessionStatusSnapshot(computerId))
+    return true
+  }
+  function pollVisibleStatus() {
+    if (!panelOpen || denied) return
+    var now = Date.now(), ids = statusComputerIds().slice(), fast = [], slow = []
+    if (selectedComputerId && ids.indexOf(selectedComputerId) === -1) ids.push(selectedComputerId)
+    var anyMoving = false, fresh = []
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i], s = sessions[id]
+      if (!s || s.trust_state !== "verified" || !s.controller_epoch ||
+          s.connection === "unauthorized" || s.connection === "offline") continue
+      if (statusMoving(s)) statusFastUntil[id] = now + 10000
+      var quick = now < Number(statusFastUntil[id] || 0)
+      // Approvals and questions come quickly while an agent may ask on a computer in view (not
+      // paused, not held by a person), and for 10 s after it settles, including once an approval
+      // turns its card to Needs Attention. Those where an agent works or something waits are named
+      // so ibarad reads them now rather than answer from its last read.
+      if (quick && s.fleet_state !== "paused" && s.fleet_state !== "human") anyMoving = true
+      if (quick && (s.fleet_state === "working" || s.fleet_state === "attention")) fresh.push(id)
+      if (readPending("session-status:" + id)) continue
+      var age = now - Number(statusPolledAt[id] || 0)
+      // The open computer and the ones held here keep their own 5 s read while nothing moves there.
+      if (quick && age >= statusFastMs - 100) fast.push(id)
+      else if (!quick && age >= statusSlowMs && id !== selectedComputerId && !holdsControlOn(id)) slow.push(id)
+    }
+    if (!anyMoving) fresh = []
+    if (!sameValue(attentionFresh, fresh)) attentionFresh = fresh
+    if (attentionQuick !== anyMoving) attentionQuick = anyMoving
+    // Longest waiting first, so every moving computer gets its turn when more than eight move.
+    var oldest = function(a, b) { return Number(statusPolledAt[a] || 0) - Number(statusPolledAt[b] || 0) }
+    fast.sort(oldest)
+    slow.sort(oldest)
+    for (var f = 0; f < fast.length && f < 8; f++) pollStatus(fast[f])
+    for (var w = 0; w < slow.length && w < 4; w++) pollStatus(slow[w])
+  }
+  Timer { id: statusTick; interval: root.statusFastMs; repeat: true; running: root.panelOpen && !root.denied; onTriggered: root.pollVisibleStatus() }
+  readonly property string previewLimitNotice: "Not previewed: at most 20 computers preview at once. Scroll or filter to see this one."
+  // `large`: the wall shows these as at most four large cards, which preview at selected quality
+  // at the Fleet pictures pace (as tiles do), so their pictures stay sharp.
+  function setVisibleComputerIds(ids, large) {
+    var allowed = ({})
+    for (var i = 0; i < computers.length; i++) allowed[computers[i].computer_id] = true
+    var requested = Array.isArray(ids) ? ids.filter(function(id) { return typeof id === "string" && allowed[id] }) : []
+    var next = requested.slice(0, 20)
+    // On-screen cards past the limit say why they have no picture instead of "loading".
+    var capped = requested.slice(20), labeled = null
+    for (var c = 0; c < capped.length; c++) {
+      var s = sessions[capped[c]]
+      // Only a healthy card waiting for a picture gets the limit notice; denial or other reasons stay.
+      if (s && !s.frame && (s.connection === "ready" || s.connection === "loading") &&
+          ["", "Preview pending", "Preview unavailable", "Waiting for an authorized preview."].indexOf(String(s.frame_error || "")) !== -1) {
+        labeled = labeled || Object.assign({}, sessions)
+        labeled[capped[c]] = Object.assign({}, s, { frame_error: previewLimitNotice })
+      }
+    }
+    for (var n = 0; n < next.length; n++) {
+      var shown = sessions[next[n]]
+      if (shown && shown.frame_error === previewLimitNotice) {
+        labeled = labeled || Object.assign({}, sessions)
+        labeled[next[n]] = Object.assign({}, shown, { frame_error: "Preview pending" })
+      }
+    }
+    if (labeled) {
+      publishSessions(labeled)
+    }
+    // Cards turning large (or back) drop the other quality's pictures on their way and ask for
+    // the new one at once.
+    var wallLarge = large === true && next.length > 0 && next.length <= 4
+    if (wallLarge !== largeWall) {
+      largeWall = wallLarge
+      previewQueue = previewQueue.filter(function(item) { return root.previewWanted(item) })
+      var due = wallLarge ? ":selected" : ":tile", last = {}
+      for (var key in previewLastRequested) if (!key.endsWith(due)) last[key] = previewLastRequested[key]
+      previewLastRequested = last
+    }
+    if (next.length === visibleComputerIds.length && next.every(function(id, index) { return id === visibleComputerIds[index] })) return
+    visibleComputerIds = next
+    previewQueue = previewQueue.filter(function(item) { return item.quality === "selected" || next.indexOf(item.computer_id) !== -1 })
+    Qt.callLater(root.refreshComputerSessions)
+  }
+  property var visibleComputerIds: []
+  // The wall shows its cards large (at most four): they preview at selected quality.
+  property bool largeWall: false
+  readonly property string wallQuality: largeWall ? "selected" : "tile"
+  // Whether a picture asked for is still wanted: a tile while its card (not a large one) or list
+  // row shows; a selected picture while its computer's Screen tab is open, or while it is a large
+  // wall card.
+  function previewWanted(request) {
+    var id = request.computer_id, shown = visibleComputerIds.indexOf(id) !== -1
+    return request.quality === "tile" ? shown && !largeWall : selectedComputerId === id || (largeWall && shown)
+  }
+  property var previewQueue: []
+  // The size, in device pixels, each preview quality is shown at, as its SteadyPreview last
+  // settled it. ibarad writes each frame scaled to fit it; until one is known, its default.
+  // A larger size asks for that quality's next frames at once rather than showing the
+  // smaller ones stretched until they are due.
+  property var previewShown: ({})
+  function notePreviewSize(quality, width, height) {
+    if (quality !== "tile" && quality !== "selected") return
+    width = Math.round(Number(width)); height = Math.round(Number(height))
+    if (!(width >= 16 && width <= 4096 && height >= 16 && height <= 4096)) return
+    var known = previewShown[quality]
+    if (known && known.width === width && known.height === height) return
+    var shown = Object.assign({}, previewShown)
+    shown[quality] = { width: width, height: height }
+    previewShown = shown
+    if (!known || width > known.width || height > known.height) {
+      var last = {}
+      for (var key in previewLastRequested) if (!key.endsWith(":" + quality)) last[key] = previewLastRequested[key]
+      previewLastRequested = last
+    }
+  }
+  property var previewActive: [null, null, null, null]
+  property var previewLastRequested: ({})
+  property int previewSequence: 0
+  property int tileCursor: 0
+  property int previewGeneration: 0
+  property var previewTargetGenerations: ({})
+
+  function targetPreviewGeneration(computerId) {
+    return Number(previewTargetGenerations[String(computerId || "")] || 0)
+  }
+  function invalidateTargetPreviews(computerId) {
+    var id = String(computerId || "")
+    if (!id) return
+    var generations = Object.assign({}, previewTargetGenerations)
+    generations[id] = targetPreviewGeneration(id) + 1
+    previewTargetGenerations = generations
+    previewQueue = previewQueue.filter(function(item) { return item.computer_id !== id })
+  }
+
+  function bindSessionEpoch(computerId, endpointId, revision, epoch, authorizationGeneration) {
+    var current = sessions[String(computerId || "")]
+    if (!current || current.trust_state !== "verified" || current.endpoint_id !== endpointId || current.binding_revision !== revision || current.authorization_generation !== authorizationGeneration || !/^[A-Za-z0-9_.:-]{1,128}$/.test(String(epoch || ""))) return false
+    var changed = !!current.controller_epoch && current.controller_epoch !== String(epoch)
+    if (changed) clearTargetEpoch(computerId, current.controller_epoch)
+    // A restarted target has forgotten any control this operator was told about.
+    if (changed) actionNotice = ""
+    var updated = Object.assign({}, sessions)
+    updated[computerId] = Object.assign({}, current, { controller_epoch: String(epoch), connection: "loading",
+      frame: changed ? null : current.frame, capture_age_ms: changed ? null : current.capture_age_ms,
+      frame_error: changed ? "Controller restarted; waiting for a new preview." : (current.frame ? current.frame_error : "Preview pending"),
+      active_task_ref: changed ? "" : current.active_task_ref, active_task: changed ? null : current.active_task })
+    publishSessions(updated)
+    clearRetryState(computerId)
+    requestRead("session-status:" + computerId, ["operator-status", "--computer", computerId, "--epoch", String(epoch)], computerId, sessionStatusSnapshot(computerId))
+    settleWaiters(String(computerId))
+    return true
+  }
+
+  function queuePreview(computerId, quality) {
+    var session = sessions[String(computerId || "")]
+    var selected = quality === "selected"
+    // Watch: the open computer's Screen tab, a picture a second. A large wall card's selected
+    // pictures come at the Fleet pictures pace.
+    var watching = selected && watchVisible && selectedComputerId === computerId
+    var key = String(computerId) + ":" + quality
+    var now = Date.now()
+    // Selected Watch owns this computer's frames while its Screen tab shows; a tile duplicate would
+    // only compete for its single capture. Its small list thumbnail still needs a tile frame, so
+    // until it has one a tile is asked for at the tile pace. Elsewhere the open computer
+    // previews at tile quality.
+    if (!selected && consoleOpen && watchVisible && selectedComputerId && computerId === selectedComputerId && hasTileFrame(session)) return false
+    // While a computer's Live Video plays, its pictures (the poster under the video) come every 30 s.
+    if (now - Number(previewLastRequested[key] || 0) < (videoPlayingFor(computerId) ? 30000 : watching ? 1000 : tilePreviewMs)) return false
+    if (denied || !session || session.trust_state !== "verified" || session.connection === "unauthorized" || !session.controller_epoch) return false
+    if (!watching && visibleComputerIds.indexOf(computerId) === -1) return false
+    if (selected && !watching && !largeWall) return false
+    // Offline backoff: tiles wait it out; a watched computer retries after at most 3 s.
+    var backoffEntry = previewBackoff[computerId]
+    if (backoffEntry && now < (watching ? Math.min(backoffEntry.until, backoffEntry.failed + 3000) : backoffEntry.until)) return false
+    for (var busy = 0; busy < previewActive.length; busy++)
+      if (previewActive[busy] && previewActive[busy].computer_id === computerId) return false
+    var queue = previewQueue.filter(function(item) { return item.key !== key })
+    if (queue.length >= 20) return false
+    queue.push({ key: key, computer_id: computerId, quality: quality,
+      endpoint_id: session.endpoint_id, binding_revision: session.binding_revision,
+      authorization_generation: session.authorization_generation,
+      controller_epoch: session.controller_epoch, generation: previewGeneration,
+      target_generation: targetPreviewGeneration(computerId),
+      display_id: session.display_id || "" })
+    previewQueue = queue
+    var last = Object.assign({}, previewLastRequested)
+    last[key] = now
+    previewLastRequested = last
+    drainPreviews()
+    return true
+  }
+  function hasTileFrame(session) {
+    var frame = session && session.frame
+    return !!frame && (frame.quality === "tile" || !!frame.tile)
+  }
+  function tileFrameOf(frame) {
+    if (!frame) return null
+    return frame.quality === "tile" ? { url: frame.url, file: frame.file, quality: "tile" } : frame.tile || null
+  }
+
+  function drainPreviews() {
+    if (!previewQueue.length) return
+    if (!panelOpen) { previewQueue = []; return }
+    var lane = -1
+    for (var i = 0; i < previewActive.length; i++) if (!previewActive[i]) { lane = i; break }
+    if (lane < 0) return
+    var queue = previewQueue.slice()
+    // Computers already known offline share one lane, so several unreachable targets
+    // cannot hold every lane for their full timeout while healthy cards wait.
+    var isOffline = function(item) { var s = item && sessions[item.computer_id]; return !!s && s.connection === "offline" }
+    var offlineActive = previewActive.some(isOffline)
+    var chosen = queue.findIndex(function(item) { return item.quality === "selected" })
+    if (chosen < 0) chosen = queue.findIndex(function(item) { return !(offlineActive && isOffline(item)) })
+    if (chosen < 0) return
+    var request = queue.splice(chosen, 1)[0]
+    previewQueue = queue
+    var session = sessions[request.computer_id]
+    if (!request.display_id) { Qt.callLater(root.drainPreviews); return }
+    if (denied || !session || session.connection === "unauthorized" || session.endpoint_id !== request.endpoint_id || session.binding_revision !== request.binding_revision || session.authorization_generation !== request.authorization_generation || session.controller_epoch !== request.controller_epoch || request.generation !== previewGeneration || request.target_generation !== targetPreviewGeneration(request.computer_id) || !previewWanted(request)) { Qt.callLater(root.drainPreviews); return }
+    request.request_id = "preview-" + (++previewSequence)
+    request.dispatched_ms = Date.now()
+    var active = previewActive.slice()
+    active[lane] = request
+    previewActive = active
+    var shown = previewShown[request.quality]
+    daemonSend(request.request_id, ["operator-observe", "--computer", request.computer_id, "--epoch", request.controller_epoch,
+      "--display", request.display_id, "--quality", request.quality].concat(shown ? ["--width", String(shown.width), "--height", String(shown.height)] : []), { kind: "preview" })
+    Qt.callLater(root.drainPreviews)
+  }
+
+  // Every preview crosses the one ibarad connection; frames arrive as events by request ID,
+  // in any order. A deliberate release (close, settings, denial) frees the lanes quietly and
+  // ignores any frame still on its way.
+  function releasePreviewLanes() {
+    var pending = Object.assign({}, daemonPending), released = false
+    for (var id in pending) if (pending[id].kind === "preview") { delete pending[id]; released = true }
+    if (released) {
+      daemonPending = pending
+      daemonOutbox = daemonOutbox.filter(function(item) { return !!pending[item.id] })
+    }
+    if (previewActive.some(function(item) { return !!item })) previewActive = [null, null, null, null]
+    Qt.callLater(root.drainPreviews)
+  }
+  // Closing the console: sessions forget selected-quality frames, then ibarad deletes every
+  // frame file no session still shows. Tiles show at once when it reopens, and a forgotten
+  // selected picture (Watch, or a large wall card) is asked for again at once.
+  function closePreviews() {
+    var kept = Object.assign({}, sessions), forgot = false
+    for (var sid in kept) if (kept[sid] && kept[sid].frame && kept[sid].frame.quality === "selected") {
+      kept[sid] = Object.assign({}, kept[sid], { frame: null, capture_age_ms: null, frame_error: "Preview pending" })
+      forgot = true
+    }
+    if (forgot) {
+      publishSessions(kept)
+      var last = {}
+      for (var key in previewLastRequested) if (!key.endsWith(":selected")) last[key] = previewLastRequested[key]
+      previewLastRequested = last
+    }
+    releasePreviewLanes()
+    releasePreviewFiles()
+  }
+  // ibarad keeps only the frame files named here: the ones a session still points at.
+  function releasePreviewFiles() {
+    var keep = []
+    for (var id in sessions) {
+      var shown = sessions[id] && sessions[id].frame
+      var file = shown ? String(shown.file || "") : ""
+      if (file) keep.push(file.slice(file.lastIndexOf("/") + 1))
+      var tile = shown && shown.tile ? String(shown.tile.file || "") : ""
+      if (tile) keep.push(tile.slice(tile.lastIndexOf("/") + 1))
+    }
+    requestRead("preview-release", ["preview-release"].concat(keep))
+  }
+  // ibarad answers each preview within 15 s. A lane older than 20 s never got its answer:
+  // fail it, and ignore the answer if it still comes.
+  function expireStalePreviews() {
+    var now = Date.now()
+    for (var lane = 0; lane < previewActive.length; lane++) {
+      var request = previewActive[lane]
+      if (!request || now - Number(request.dispatched_ms || now) < 20000) continue
+      forgetDaemonRequest(request.request_id)
+      consumePreview(lane, { version: 2, request_id: request.request_id, command: "operator-observe",
+        connection: "offline", data: null, error: { code: "TIMEOUT", message: "The computer didn't send a picture in time. ibara will keep trying.", retry_safe: true } })
+    }
+  }
+
+  // A frame file is a P6 header and RGB pixels, at most the target's 480 × 270 tile or 1280 × 720 selected frame.
+  function previewFileLimit(quality) {
+    return (quality === "tile" ? 480 * 270 : 1280 * 720) * 3 + 32
+  }
+  function consumePreview(lane, text) {
+    var request = previewActive[lane]
+    var active = previewActive.slice()
+    active[lane] = null
+    previewActive = active
+    if (!request) return
+    var session = sessions[request.computer_id]
+    if (!denied && session && session.connection !== "unauthorized" && session.endpoint_id === request.endpoint_id && session.binding_revision === request.binding_revision && session.authorization_generation === request.authorization_generation && session.controller_epoch === request.controller_epoch && request.generation === previewGeneration && request.target_generation === targetPreviewGeneration(request.computer_id) && previewWanted(request)) {
+      try {
+        var parsed = StatusModel.parseEnvelope(text, 2 * 1024 * 1024)
+        if (parsed.request_id !== request.request_id) throw new Error("ibara dropped a picture it couldn't trust. The next one is on its way.")
+        if (parsed.error) refusePreview(request.computer_id, parsed.error)
+        else {
+          var data = parsed.data || ({}), frame = data.result || ({})
+          if (data.computer_id !== request.computer_id || data.endpoint_id !== request.endpoint_id || data.binding_revision !== request.binding_revision || data.controller_epoch !== request.controller_epoch || frame.endpoint_id !== request.endpoint_id || frame.controller_epoch !== request.controller_epoch || frame.authorization_generation !== request.authorization_generation || !StatusModel.previewFile(frame.file, request.computer_id, request.quality) || !(Number(frame.bytes) > 0 && Number(frame.bytes) <= previewFileLimit(request.quality))) throw new Error("ibara dropped a picture it couldn't trust. The next one is on its way.")
+          // ibarad writes the picture to a private file; the script never holds its bytes.
+          frame = Object.assign({}, frame, { url: "file://" + frame.file, quality: request.quality, received_ms: Date.now() })
+          // A selected frame carries the computer's last tile frame for its list thumbnail. A tile
+          // that arrives while that computer's Screen shows joins the selected picture rather
+          // than replace it.
+          var prior = session.frame
+          var watched = consoleOpen && watchVisible && selectedComputerId === request.computer_id
+          if (request.quality === "selected") frame.tile = tileFrameOf(prior)
+          else if (watched && prior && prior.quality === "selected") frame = Object.assign({}, prior, { tile: tileFrameOf(frame) })
+          var updated = Object.assign({}, sessions)
+          var capturedAt = StatusModel.isoMs(frame.capture_time)
+          var age = Date.now() - capturedAt
+          updated[request.computer_id] = Object.assign({}, session, { frame: frame, frame_error: "", connection: "ready", capture_age_ms: isFinite(age) && age >= 0 ? age : null })
+          publishSessions(updated)
+          enforcePreviewMemory()
+          if (previewBackoff[request.computer_id]) { var cleared = Object.assign({}, previewBackoff); delete cleared[request.computer_id]; previewBackoff = cleared }
+        }
+      } catch (error) {
+        var failed = Object.assign({}, sessions)
+        failed[request.computer_id] = Object.assign({}, session, { frame_error: StatusModel.clip(error && error.message ? error.message : error, 200) })
+        publishSessions(failed)
+      }
+    }
+    Qt.callLater(root.drainPreviews)
+  }
+
+  // A restarted or rebound target answers the old epoch with "Target binding changed." The
+  // one-shot and preview routes wrap it as OPERATOR_REFUSED with the target code in the message.
+  function targetEpochChanged(error) {
+    var code = String(error && error.code || ""), message = String(error && error.message || "")
+    return code === "IDENTITY_MISMATCH" || code === "STALE_EPOCH" || /^STALE_EPOCH\b/.test(message) || /(^|: )Target binding changed\.$/.test(message)
+  }
+  // Fail closed. Only known transient conditions keep the last authorized frame: route
+  // timeouts/loss (labeled offline, with backoff) and a busy, missing or late capture
+  // (annotated). Any other refusal (denial, revocation, forget, identity change, unknown)
+  // clears the pixels until an authenticated status confirms access again.
+  property var previewBackoff: ({})
+  function refusePreview(computerId, error) {
+    var session = sessions[computerId]
+    if (!session) return
+    var code = String(error && error.code || ""), message = String(error && (error.message || error.code) || "Preview refused.")
+    // ibara on this computer stopped, not the computer: it keeps its last picture and state.
+    if (code === "DAEMON_UNAVAILABLE") return
+    var offline = ["TIMEOUT", "OPERATOR_TRANSPORT_UNAVAILABLE"].indexOf(code) !== -1 || /^Selected operator transport (timed out|closed)/.test(message)
+    var updated = Object.assign({}, sessions)
+    if (offline || /^(BUDGET_EXCEEDED|CAPABILITY_UNAVAILABLE|TIMEOUT)\b/.test(message)) {
+      if (offline) {
+        // Per-target jittered exponential backoff (3 s → 60 s) so unreachable computers cannot hold the lanes.
+        var backoff = Object.assign({}, previewBackoff), prior = backoff[computerId]
+        var delay = Math.min(60000, prior ? prior.delay * 2 : 3000)
+        backoff[computerId] = { delay: delay, failed: Date.now(), until: Date.now() + Math.round(delay * (0.8 + Math.random() * 0.4)) }
+        previewBackoff = backoff
+      }
+      updated[computerId] = Object.assign({}, session, { connection: offline ? "offline" : session.connection, frame_error: StatusModel.clip(message, 200) })
+    } else {
+      var epochChanged = targetEpochChanged(error)
+      invalidateTargetPreviews(computerId)
+      clearWatchAcknowledgment(computerId)
+      if (epochChanged) clearTargetEpoch(computerId, session.controller_epoch)
+      else forgetComputerCaches(computerId)
+      updated[computerId] = Object.assign({}, session, {
+        connection: epochChanged ? "loading" : "unauthorized", frame: null, capture_age_ms: null,
+        controller_epoch: epochChanged ? "" : session.controller_epoch,
+        active_task_ref: epochChanged ? "" : session.active_task_ref, active_task: null,
+        frame_error: epochChanged ? "Controller restarted; waiting for a new preview." : StatusModel.clip("Access not confirmed. " + message, 200) })
+      Qt.callLater(root.refreshComputerSessions)
+    }
+    publishSessions(updated)
+  }
+
+  // I4 bound: frame files plus decoded surfaces stay within 64 MiB per operator.
+  // A visible card can hold two frames and two decoded layers while it cross-fades.
+  readonly property int previewMemoryLimit: 64 * 1024 * 1024
+  function framePayloadBytes(frame) {
+    return frame && typeof frame === "object" ? Number(frame.bytes) || 0 : 0
+  }
+  function retainedPreviewBytes() {
+    var total = 0
+    for (var id in sessions) {
+      var session = sessions[id]
+      if (!session || !session.frame) continue
+      var payload = framePayloadBytes(session.frame)
+      if (visibleComputerIds.indexOf(id) !== -1) total += 2 * payload + 2 * (session.frame.quality === "selected" ? 1280 * 720 : 480 * 270) * 4
+      else total += payload
+      if (id === selectedComputerId && consoleOpen && watchVisible) total += 2 * payload + 2 * 1280 * 720 * 4
+    }
+    return total
+  }
+  function enforcePreviewMemory() {
+    var total = retainedPreviewBytes()
+    if (total <= previewMemoryLimit) return
+    var candidates = []
+    for (var id in sessions) {
+      var session = sessions[id]
+      if (session && session.frame && id !== selectedComputerId && visibleComputerIds.indexOf(id) === -1)
+        candidates.push({ id: id, at: Number(session.frame.received_ms) || 0, bytes: framePayloadBytes(session.frame) })
+    }
+    candidates.sort(function(a, b) { return a.at - b.at })
+    var updated = Object.assign({}, sessions)
+    for (var i = 0; i < candidates.length && total > previewMemoryLimit; i++) {
+      updated[candidates[i].id] = Object.assign({}, updated[candidates[i].id], { frame: null, capture_age_ms: null,
+        frame_error: "Preview released to stay within the memory bound. It refreshes when this computer is visible." })
+      total -= candidates[i].bytes
+    }
+    publishSessions(updated)
+  }
+  function previewStats() {
+    var rows = []
+    for (var i = 0; i < computers.length; i++) {
+      var c = computers[i]
+      if (!c) continue
+      var frame = c.frame && typeof c.frame === "object" ? c.frame : null
+      // displayed_age_ms matches the wall's label: age on arrival plus local time since arrival.
+      var displayed = frame && c.capture_age_ms != null && isFinite(Number(frame.received_ms)) ? c.capture_age_ms + Math.max(0, Date.now() - Number(frame.received_ms)) : null
+      rows.push({ computer_id: c.computer_id, connection: c.connection || "", visible: visibleComputerIds.indexOf(c.computer_id) !== -1,
+        capture_time: frame ? String(frame.capture_time || "") : "", displayed_age_ms: displayed,
+        frame_sequence: frame && typeof frame.frame_sequence === "number" ? frame.frame_sequence : null,
+        quality: frame ? String(frame.quality || "") : "", frame_error: String(c.frame_error || "") })
+    }
+    return JSON.stringify({ now: new Date().toISOString(), selected: selectedComputerId, console_open: consoleOpen,
+      lanes_active: previewActive.filter(function(item) { return !!item }).length, queue_length: previewQueue.length,
+      reads_active: activeReads.filter(function(item) { return !!item }).length, read_queue_length: readQueue.length,
+      retained_bytes_estimate: retainedPreviewBytes(), computers: rows })
+  }
+
+  // Commands for the computer in scope, over its pairing route.
+  function openViewerFor(computerId) {
+    if (!holdsControlOn(computerId) || mutating) { actionError = mutating ? "Wait for the current action to finish." : "Choose Take Control first. Open Viewer works while you hold control."; return false }
+    var epoch = sessions[String(computerId)] && sessions[String(computerId)].controller_epoch
+    startHelper("open-viewer", ["open-viewer", "--computer", String(computerId)].concat(epoch ? ["--epoch", String(epoch)] : []))
+    return true
+  }
+  // A terminal on this desktop, signed in to the computer over Tailscale.
+  function openTerminalFor(computerId) {
+    if (!sessions[String(computerId || "")] || mutating) { if (mutating) actionError = "Wait for the current action to finish."; return false }
+    startHelper("open-terminal", ["open-terminal", "--computer", String(computerId)])
+    return true
+  }
+  function loadTasks() { requestScopedRead("tasks", "operator-tasks", []) }
+  function loadArtifacts() { requestScopedRead("artifacts", "operator-artifacts", ["--limit", "20"]) }
+  function loadProcedures() { requestScopedRead("procedures", "operator-procedures", []) }
+  function loadHealth() { requestScopedRead("health", "operator-health", []) }
+  function loadLogs(which) {
+    logsWhich = which === "viewer" ? "viewer" : "ibara"
+    requestScopedRead("logs", "operator-logs", ["--which", logsWhich, "--lines", "80"])
+  }
+  function loadComputerSettings() { requestScopedRead("computer-settings", "operator-settings", ["get"]) }
+  function inspectTask(taskRef) {
+    var ref = String(taskRef || "")
+    if (!ref) return
+    if (selectedTaskRef !== ref) { selectedTask = null; selectedTaskDetail = null; selectedTaskDetailRef = ""; selectedTaskDetailObservedAt = "" }
+    selectedTaskRef = ref
+    selectedTaskLoading = true
+    requestScopedRead("task", "operator-task", ["--task", ref], ref)
+  }
+  function inspectProcedure(procedureRef) {
+    var ref = String(procedureRef || "")
+    if (!ref) return
+    if (selectedProcedureRef !== ref) selectedProcedure = null
+    selectedProcedureRef = ref
+    selectedProcedureLoading = true
+    requestScopedRead("procedure", "operator-procedure", ["--ref", ref], ref)
+  }
+  function extendTask(taskRef, seconds) { return startComputerAction("extend", "operator-task-extend", scopedComputerId, ["--task", String(taskRef), "--seconds", String(seconds)]) }
+  function revokeTask(taskRef) { return startComputerAction("revoke", "operator-task-revoke", scopedComputerId, ["--task", String(taskRef)]) }
+  // Collect File saves one of the open computer's results into the download folder, never
+  // overwriting a file already there.
+  function fetchArtifact(artifactRef, name) {
+    var local = humanReceiveLocal(downloadFolder, String(name || ""))
+    if (!local) { actionError = "ibara can't save " + String(name || "this result") + " in " + downloadFolder + ". Choose another Download folder in ibara's Settings."; return false }
+    return startComputerAction("fetch", "operator-artifact-save", scopedComputerId, ["--ref", String(artifactRef), "--to", local])
+  }
+  function approveProcedure(procedureRef, sha) { return startComputerAction("approve-procedure", "operator-procedure-review", scopedComputerId, ["--ref", String(procedureRef), "--decision", "approve", "--sha", String(sha)]) }
+  function quarantineProcedure(procedureRef) { return startComputerAction("quarantine-procedure", "operator-procedure-review", scopedComputerId, ["--ref", String(procedureRef), "--decision", "quarantine"]) }
+  // The open computer's access table: every identity, its rules and its pairing.
+  function loadAccess() { requestScopedRead("access", "operator-access", []) }
+  // An access change (access-set, access-remove, access-unpair) finished for one computer.
+  signal accessChangeSettled(string computerId, bool ok)
+  function setAccess(subject, capability, rule, revision, effects) {
+    var body = {subject: subject, capability: capability, rule: rule, expected_revision: revision}
+    if (effects) body.effects = effects
+    return startComputerAction("access-set", "operator-access-set", scopedComputerId, [JSON.stringify(body)])
+  }
+  function removeAccess(subject, revision, unpair) {
+    var kind = unpair ? "access-unpair" : "access-remove"
+    return startComputerAction(kind, "operator-" + kind, scopedComputerId, [JSON.stringify({subject: subject, expected_revision: revision})])
+  }
+
+  function loadTailnet() { if (!readPending("tailnet")) requestRead("tailnet", ["tailnet"]) }
+  function loadPairRequests() { if (!readPending("pair-requests")) requestRead("pair-requests", ["pair-requests"]) }
+  function loadConnectPrompt() { if (!readPending("connect-prompt")) requestRead("connect-prompt", ["connect-prompt"]) }
+  function sameValue(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
+  // Adding computers and the everyday features below take a lane of their own
+  // (the side lane): several run at once, and none holds up Take Control or a file transfer.
+  function sideSend(args, route) {
+    sideSequence += 1
+    daemonSend("side-" + sideSequence + "-" + args[0], args, Object.assign({ kind: "side", op: String(args[0]) }, route || {}))
+  }
+  // An add that stopped (declined, expired or failed, such as a refused invite code) says why
+  // in an error toast; its row on Add Computer keeps only "Couldn't add it" and Try Again.
+  function setPairing(node, fields) {
+    var next = Object.assign({}, pairings)
+    next[node] = Object.assign({ node: node }, pairings[node] || {}, fields)
+    pairings = next
+    var p = next[node], name = p.label || StatusModel.computerName(node)
+    if (["declined", "expired", "failed"].indexOf(fields.state) !== -1)
+      actionError = p.state === "declined" ? "Someone at " + name + " declined. Ask them to accept, then choose Try Again."
+        : p.state === "expired" ? "Nobody accepted within 5 minutes. Choose Try Again, then accept on " + name + "."
+        : p.message || "ibara couldn't add " + name + ". Choose Try Again."
+  }
+  function forgetPairing(node) {
+    if (!pairings[node]) return
+    var next = Object.assign({}, pairings)
+    delete next[node]
+    pairings = next
+  }
+  // Adds one computer from the tailnet. Your own computer adds itself; another person's
+  // computer shows a code here that its screen shows too, and waits for someone there to accept.
+  // With the invite code its owner gave you (`inviteCode`), another person's computer adds at once.
+  function startPairing(node, inviteCode) {
+    var name = String(node || ""), current = pairings[name], invite = String(inviteCode || "").trim()
+    if (!StatusModel.tailnetNode(name) || denied || (current && ["starting", "waiting", "canceling"].indexOf(current.state) !== -1)) return false
+    if (invite && !/^[A-Za-z0-9 -]{1,32}$/.test(invite)) {
+      setPairing(name, { state: "failed", invite: true, message: "An invite code has 8 letters and numbers, like 4H7K-92QX. Check it, then try again." })
+      return false
+    }
+    setPairing(name, { requestId: "", code: "", mode: "", message: "", computerId: "", label: "", state: "starting", startedAt: Date.now(), invite: !!invite })
+    sideSend(invite ? ["pair-start", name, invite] : ["pair-start", name], { node: name })
+    return true
+  }
+  function cancelPairing(node) {
+    var p = pairings[String(node || "")]
+    if (!p || ["starting", "waiting"].indexOf(p.state) === -1) return
+    setPairing(p.node, { state: "canceling" })
+    // A start still on its way is canceled as soon as its request id arrives.
+    if (p.requestId) sideSend(["pair-cancel", p.requestId], { node: p.node, requestId: p.requestId })
+  }
+  function pollPairings() {
+    var asked = Object.assign({}, pairStatusAsked)
+    for (var node in pairings) {
+      var p = pairings[node]
+      if (p.state !== "waiting" || !p.requestId || asked[p.requestId]) continue
+      // A request expires after 5 minutes; a console that stops hearing back stops waiting too.
+      if (Date.now() - p.startedAt > 6 * 60000) { setPairing(node, { state: "expired" }); continue }
+      asked[p.requestId] = true
+      sideSend(["pair-status", p.requestId], { node: node, requestId: p.requestId })
+    }
+    pairStatusAsked = asked
+  }
+  Timer { interval: 2000; repeat: true; running: root.pairingActive; onTriggered: root.pollPairings() }
+  function answerPairRequest(requestId, answer) {
+    var id = String(requestId || ""), request = null
+    for (var i = 0; i < pairRequests.length; i++) if (pairRequests[i].request_id === id) request = pairRequests[i]
+    if (!request || ["accept", "decline"].indexOf(answer) === -1 || pairAnswers[id]) return false
+    var next = Object.assign({}, pairAnswers)
+    next[id] = answer
+    pairAnswers = next
+    sideSend(["pair-answer", id, answer], { requestId: id, answer: answer, from: request.from_computer })
+    return true
+  }
+  // One notice per new request, so the person at this computer knows to look.
+  function notifyPairRequests() {
+    var seen = Object.assign({}, notifiedPairRequests), fresh = false
+    for (var i = 0; i < pairRequests.length; i++) {
+      var request = pairRequests[i]
+      if (seen[request.request_id]) continue
+      seen[request.request_id] = true
+      fresh = true
+      var name = StatusModel.computerName(request.from_computer)
+      queueNotice({ title: "ibara", body: name + (request.from_owner ? " (" + request.from_owner + ")" : "") + " wants to use this computer. If " + name + " shows the code " + request.code + ", choose Accept in ibara." })
+    }
+    if (fresh) notifiedPairRequests = seen
+  }
+  // Sign In to Tailscale, as Omarchy's own Tailscale menu does it: Tailscale's sign-in page when
+  // it has one waiting, else `tailscale up`, whose sign-in page opens as soon as it prints it.
+  function signInToTailscale() {
+    var tailscale = tailnet ? tailnet.tailscale : null
+    if (tailscale && tailscale.login_url) { Qt.openUrlExternally(tailscale.login_url); return }
+    if (tailscaleUp.running) return
+    tailscaleUp.opened = false
+    tailscaleUp.lastLine = ""
+    tailscaleUp.running = true
+  }
+  function consumeSide(route, text) {
+    var parsed
+    try { parsed = StatusModel.parseEnvelope(text) }
+    catch (error) { parsed = { error: { code: "UNREADABLE", message: "ibara couldn't read the answer. Try again.", retry_safe: true } } }
+    var data = parsed.data || ({}), error = parsed.error || null
+    // Pairing failures arrive in plain English already, naming the computer.
+    var message = error ? StatusModel.clip(error.message || error.code, 300) : ""
+    if (route.op === "pair-start" || route.op === "pair-status") consumePairing(route, data, error, message)
+    else if (route.op === "pair-cancel") {
+      var canceled = pairings[route.node]
+      if (!canceled || canceled.state !== "canceling") return
+      // A request answered before the cancel arrived keeps its answer: ask where it stands.
+      if (error) setPairing(route.node, { state: "waiting", requestId: route.requestId })
+      else forgetPairing(route.node)
+    }
+    else if (route.op === "pair-answer") {
+      var answers = Object.assign({}, pairAnswers)
+      delete answers[route.requestId]
+      pairAnswers = answers
+      var name = StatusModel.computerName(route.from)
+      if (!error) pairRequests = pairRequests.filter(function(request) { return request.request_id !== route.requestId })
+      if (error) actionError = message || "ibara couldn't answer " + name + ". Try again."
+      else if (data.state === "expired") actionError = "The request from " + name + " expired. Add this computer again from " + name + "."
+      else actionNotice = route.answer === "accept" ? name + " can use this computer now." : "Declined. " + name + " can't use this computer."
+      loadPairRequests()
+    }
+    else if (route.op === "invite-create" || route.op === "invite-revoke") consumeInvite(route, data, error, message)
+    else if (route.op === "video") consumeVideo(route, data, error)
+    else consumeEveryday(route, data, error, message)
+  }
+  function consumePairing(route, data, error, message) {
+    var node = route.node, p = pairings[node]
+    if (route.op === "pair-status") {
+      var asked = Object.assign({}, pairStatusAsked)
+      delete asked[route.requestId]
+      pairStatusAsked = asked
+    }
+    if (!p || (route.op === "pair-status" && p.requestId !== route.requestId)) return
+    if (p.state === "canceling") {
+      // Canceled while the start was on its way: cancel the request it made.
+      if (route.op !== "pair-start") return
+      if (!error && data.request_id) sideSend(["pair-cancel", String(data.request_id)], { node: node, requestId: String(data.request_id) })
+      else forgetPairing(node)
+      return
+    }
+    if (["starting", "waiting"].indexOf(p.state) === -1) return
+    if (error) {
+      // A check that got no answer is asked again; the request itself is still waiting.
+      if (route.op === "pair-status" && ["DAEMON_UNAVAILABLE", "TIMEOUT"].indexOf(String(error.code)) !== -1) return
+      setPairing(node, { state: "failed", message: message || "ibara couldn't add " + StatusModel.computerName(node) + "." })
+      return
+    }
+    var view = StatusModel.pairingView(data)
+    if (!view) { setPairing(node, { state: "failed", message: "ibara got an answer it couldn't read. Choose Try Again." }); return }
+    setPairing(node, { requestId: view.request_id, code: view.code || p.code, mode: view.mode || p.mode, state: view.state,
+      message: view.message, computerId: view.computer_id, label: view.label })
+    if (view.state === "paired") {
+      loadComputers()
+      loadTailnet()
+      pairingAdded(node, view.label || StatusModel.computerName(node))
+    }
+  }
+  // ---- Share This Computer: single-use invite codes for friends, made on this computer
+  // (`invites`, `invite-create`, `invite-revoke`). A new code shows once, right after it is made.
+  property var invites: []
+  property bool invitesLoaded: false
+  // This computer's page in the Tailscale admin console ({ address, share_url }), or null.
+  property var shareTailscale: null
+  property var newInvite: null
+  // "create", or the id of the invite being revoked.
+  property string inviteBusy: ""
+  function loadInvites() { if (!readPending("invites")) requestRead("invites", ["invites"]) }
+  function createInvite(level, lasts) {
+    if (inviteBusy || ["watch", "use_with_approval", "take_control"].indexOf(level) === -1 || ["hour", "day", "week", "never"].indexOf(lasts) === -1) return false
+    inviteBusy = "create"
+    newInvite = null
+    sideSend(["invite-create", level, lasts], {})
+    return true
+  }
+  function revokeInvite(id) {
+    var key = String(id || "")
+    if (inviteBusy || !StatusModel.requestId(key)) return false
+    inviteBusy = key
+    sideSend(["invite-revoke", key], { inviteId: key })
+    return true
+  }
+  function consumeInvite(route, data, error, message) {
+    inviteBusy = ""
+    if (error) actionError = message || (route.op === "invite-create" ? "ibara couldn't make the invite. Try again." : "ibara couldn't revoke the invite. Try again.")
+    else if (route.op === "invite-create") newInvite = StatusModel.inviteView(data.invite)
+    else {
+      if (newInvite && newInvite.id === route.inviteId) newInvite = null
+      actionNotice = data.ended === true ? "Revoked. Their access to this computer ended." : "Revoked. That code no longer works."
+    }
+    loadInvites()
+  }
+  // The fleet's card for this computer, once it is on the fleet.
+  readonly property string thisComputerId: {
+    var list = tailnet ? tailnet.computers : []
+    for (var i = 0; i < list.length; i++) if (list[i].is_self && list[i].paired && list[i].computer_id) return list[i].computer_id
+    return ""
+  }
+  // The computer this console runs on, as the tailnet names it.
+  function isThisComputer(node) {
+    var name = String(node || "").toLowerCase()
+    if (!tailnet || !name) return false
+    if (String(tailnet.tailscale.self_node || "").toLowerCase() === name) return true
+    return tailnet.computers.some(function(c) { return c.is_self && c.node.toLowerCase() === name })
+  }
+
+  // ---- everyday features over the pairing route (release wave 2). Each travels on the side lane;
+  // `busy` names what is on its way, by key, so its button can say so.
+  property var busy: ({})
+  function setBusy(key, value) {
+    if (!key || (!value && !busy[key])) return
+    var next = Object.assign({}, busy)
+    if (value) next[key] = value
+    else delete next[key]
+    busy = next
+  }
+  // An error for one computer, with the fix it has when there is one, so the console can show
+  // Fix It beside the message: the computer's own needs_person first, else one the error names.
+  // `cause` is the error as ibarad sent it ({code, message}), whose code the shown text leaves out.
+  property var actionErrorFix: null
+  function reportError(message, computerId, cause) {
+    var id = String(computerId || ""), s = sessions[id]
+    var code = cause && typeof cause === "object" ? String(cause.code || "") : String(cause || "")
+    var raw = cause && typeof cause === "object" ? String(cause.message || "") : ""
+    var fix = s && s.needs_person && s.needs_person.fix ? s.needs_person.fix : StatusModel.fixForError(code, raw || message)
+    actionErrorFix = id && fix ? { computerId: id, fix: fix } : null
+    actionError = String(message || "")
+  }
+  // A computer's commands need its current connection (its controller epoch). One asked for before
+  // that exists (the console was closed, or just opened) waits here and runs once it is up.
+  property var connectWaiters: ({})
+  function whenConnected(computerId, run, failed) {
+    var id = String(computerId || ""), s = sessions[id]
+    if (!s || s.trust_state !== "verified") { if (failed) failed(s ? "This computer isn't paired from here. Pair it again from Add Computer." : "That computer is no longer on your fleet."); return }
+    if (s.controller_epoch) { run(); return }
+    var next = Object.assign({}, connectWaiters)
+    next[id] = (next[id] || []).concat([{ run: run, failed: failed || null }])
+    connectWaiters = next
+    if (!readPending("session-bootstrap:" + id)) requestRead("session-bootstrap:" + id, ["operator-session", "--computer", id], id)
+  }
+  function settleWaiters(computerId, error) {
+    var list = connectWaiters[computerId]
+    if (!list) return
+    var next = Object.assign({}, connectWaiters)
+    delete next[computerId]
+    connectWaiters = next
+    for (var i = 0; i < list.length; i++) {
+      if (!error) list[i].run()
+      else if (list[i].failed) list[i].failed(error)
+    }
+  }
+  // A command for one computer on the side lane, as soon as its connection is up.
+  function sendToComputer(command, computerId, rest, route, busyKey) {
+    var id = String(computerId || "")
+    if (busyKey) setBusy(busyKey, command)
+    whenConnected(id, function() {
+      var args = root.computerArgs(command, id, rest)
+      if (!args) { if (busyKey) root.setBusy(busyKey, ""); root.reportError("ibara lost its connection to " + root.computerLabelFor(id) + ". Try again.", id, ""); return }
+      root.sideSend(args, Object.assign({ computerId: id, busyKey: busyKey || "" }, route || {}))
+    }, function(message) {
+      if (busyKey) root.setBusy(busyKey, "")
+      if (route && route.failed) route.failed(message)
+      else root.reportError(message, id, "")
+    })
+  }
+  function updateSession(computerId, fields) {
+    var s = sessions[computerId]
+    if (!s) return
+    var next = Object.assign({}, sessions)
+    next[computerId] = Object.assign({}, s, fields)
+    publishSessions(next)
+  }
+  // Re-reads one computer's status soon after something changed it.
+  function recheckComputer(computerId) {
+    var s = sessions[computerId]
+    if (s && s.controller_epoch && !readPending("session-status:" + computerId))
+      requestRead("session-status:" + computerId, ["operator-status", "--computer", computerId, "--epoch", s.controller_epoch], computerId, sessionStatusSnapshot(computerId))
+  }
+  // The health report also carries the computer's repair state, wake details and whether a
+  // restart stops at its disk password.
+  function applyHealth(computerId, result) {
+    var s = sessions[computerId]
+    if (!s) return
+    var fields = { disk_password: result.disk_password === true }
+    if (result.wake !== undefined) fields.wake = StatusModel.wakeView(result.wake)
+    if (result.repair && typeof result.repair === "object") fields.needs_person = StatusModel.needsPersonView(result.repair.needs_person)
+    updateSession(computerId, fields)
+  }
+
+  // ---- approvals, agents' questions and computers that need you, across the fleet
+  // (fleet-attention). Read every 10 s whether or not a console is open, so the bar can count
+  // them and each new approval can ask on the desktop; every 1.5 s while a computer in view has an
+  // agent working or something waiting for you (attentionQuick). Each has a standing toast in the console.
+  property var attention: []
+  property bool attentionLoaded: false
+  // Computers whose last approvals read failed; their items are the ones read before.
+  property var attentionUnreachable: []
+  // Approvals to answer, oldest first, so a new one never displaces the one being read.
+  readonly property var approvals: attention.filter(function(item) { return item.kind === "approval" })
+  // Questions put away here because ibara (here or there) is too old to dismiss them itself.
+  property var hiddenQuestions: ({})
+  // Agents' questions, oldest first: answered with one of their options, or dismissed.
+  readonly property var questions: attention.filter(function(item) { return item.kind === "question" && !hiddenQuestions[item.ref] })
+  // Needs put away in the console: {computerId: the message}; one shows again once it changes.
+  property var hiddenNeeds: ({})
+  // Computers that need a person, one entry each (StatusModel.needsYouView).
+  readonly property var needsYou: StatusModel.needsYouView(attention, computers, hiddenNeeds)
+  readonly property int needsYouCount: approvals.length + questions.length + needsYou.length
+  function hideNeed(computerId) {
+    var id = String(computerId || ""), hidden = Object.assign({}, hiddenNeeds)
+    for (var i = 0; i < needsYou.length; i++) if (needsYou[i].computer_id === id) hidden[id] = needsYou[i].message
+    hiddenNeeds = hidden
+  }
+  // Computers offline or needing attention for a minute or more (StatusModel.lastingProblems):
+  // the bar's red dot, each with its toast. `problemStarts` is when each problem began;
+  // `hiddenProblems` what was put away, by computer (its words; it shows again once they change).
+  property var problemStarts: ({})
+  property var hiddenProblems: ({})
+  property var problems: []
+  function refreshProblems() {
+    var now = Date.now(), starts = StatusModel.problemSince(computers, problemStarts, now)
+    if (!sameValue(problemStarts, starts)) problemStarts = starts
+    var hidden = hiddenProblems, kept = ({})
+    for (var id in hidden) if (starts[id]) kept[id] = hidden[id]
+    if (!sameValue(hidden, kept)) hiddenProblems = kept
+    var next = StatusModel.lastingProblems(computers, starts, now, kept)
+    if (!sameValue(problems, next)) problems = next
+  }
+  onComputersChanged: refreshProblems()
+  function hideProblem(computerId) {
+    var id = String(computerId || ""), hidden = Object.assign({}, hiddenProblems)
+    for (var i = 0; i < problems.length; i++) if (problems[i].computer_id === id) hidden[id] = problems[i].signature
+    hiddenProblems = hidden
+    refreshProblems()
+  }
+  // With no console or quick panel open nothing else reads a computer's status, yet the bar shows
+  // what is happening from the start: every computer's status is read at most once a minute (its
+  // session opened first), and one the bar counts as offline or needing attention on every
+  // refresh, each with its own backoff, so a problem that has passed never keeps the bar red.
+  readonly property int closedStatusMs: 60000
+  function pollClosedStatus() {
+    if (panelOpen || denied || daemonDown) return
+    var now = Date.now(), polled = Object.assign({}, statusPolledAt), asked = false
+    for (var i = 0; i < computers.length; i++) {
+      var c = computers[i], id = c.computer_id, state = StatusModel.computerState(c)
+      if (c.trust_state !== "verified" || (sessionRetry[id] && now < sessionRetry[id].until)) continue
+      if (state !== "offline" && state !== "attention" && c.controller_epoch && now - Number(polled[id] || 0) < closedStatusMs) continue
+      if (!c.controller_epoch) { if (!readPending("session-bootstrap:" + id)) requestRead("session-bootstrap:" + id, ["operator-session", "--computer", id], id) }
+      else if (!readPending("session-status:" + id)) {
+        polled[id] = now
+        asked = true
+        requestRead("session-status:" + id, ["operator-status", "--computer", id, "--epoch", c.controller_epoch], id, sessionStatusSnapshot(id))
+      }
+    }
+    if (asked) statusPolledAt = polled
+  }
+  function approvalsFor(computerId) { return approvals.filter(function(item) { return item.computer_id === String(computerId) }) }
+  function loadAttention() {
+    if (busy["attention"]) return
+    setBusy("attention", "reading")
+    var args = ["fleet-attention"]
+    for (var i = 0; i < attentionFresh.length; i++) args.push("--fresh", attentionFresh[i])
+    sideSend(args, { busyKey: "attention" })
+  }
+  property bool attentionQuick: false
+  // Computers in view where an agent works or something waits, while attentionQuick: `--fresh`
+  // asks ibarad to read them now rather than answer from its last read of them.
+  property var attentionFresh: []
+  onPanelOpenChanged: if (!panelOpen) { attentionQuick = false; attentionFresh = [] }
+  onAttentionQuickChanged: if (attentionQuick) loadAttention()
+  Timer { interval: root.attentionQuick ? 1500 : 10000; repeat: true; running: true; onTriggered: root.loadAttention() }
+  // Repair items name the computers whose self-repair needs a person; a computer that is on and
+  // not named no longer does.
+  function applyAttention(items) {
+    if (!sameValue(attention, items)) attention = items
+    attentionLoaded = true
+    var repairs = ({}), next = null
+    for (var i = 0; i < items.length; i++) if (items[i].kind === "repair" && !repairs[items[i].computer_id]) repairs[items[i].computer_id] = items[i]
+    for (var id in sessions) {
+      var s = sessions[id], item = repairs[id]
+      if (!s || (!item && (!s.needs_person || s.connection === "offline"))) continue
+      var want = item ? StatusModel.needsPersonView({ fix: item.ref, message: item.summary, code: s.needs_person ? s.needs_person.code : "" }) : null
+      if (sameValue(s.needs_person || null, want)) continue
+      if (!next) next = Object.assign({}, sessions)
+      next[id] = Object.assign({}, s, { needs_person: want })
+    }
+    if (next) publishSessions(next)
+    notifyApprovals()
+    closeStaleApprovalNotices()
+  }
+  // Approve, Deny or Always Allow, from the console or a desktop notification. One no longer
+  // listed (answered elsewhere, or gone) is said so rather than ignored. Always Allow is only for
+  // an agent's send, spend or delete step (StatusModel.approvalAsks).
+  signal agentAllowed(string computerId, string text)
+  function answerApproval(ref, answer, fromNotice, label) {
+    var item = null
+    for (var i = 0; i < approvals.length; i++) if (approvals[i].ref === ref) item = approvals[i]
+    if (["approve", "deny", "always"].indexOf(answer) === -1 || busy["answer:" + ref]) return false
+    if (answer === "always" && item && !item.effect) return false
+    if (!item || item.unreachable) {
+      var name = item ? (item.label || computerLabelFor(item.computer_id)) : label
+      var said = item ? name + " isn't answering right now. You can answer once it's back." : "That request" + (label ? " on " + label : "") + " is no longer waiting."
+      actionNotice = said
+      if (fromNotice === true && !consoleOpen) queueNotice({ title: "ibara", body: said })
+      return false
+    }
+    sendToComputer("operator-answer-attention", item.computer_id, [ref, answer],
+      { ref: ref, answer: answer, label: item.label || computerLabelFor(item.computer_id), summary: item.summary, fromNotice: fromNotice === true,
+        stopAsking: item.stopAsking === true, failed: function(message) { root.approvalFailed(item, answer, message, fromNotice === true) } }, "answer:" + ref)
+    return true
+  }
+  function approvalFailed(item, answer, message, fromNotice) {
+    var verb = answer === "always" ? "always allow" : answer === "approve" ? (item.stopAsking ? "allow" : "approve") : item.stopAsking ? "answer" : "deny"
+    var text = "ibara couldn't " + verb + " the request on " + (item.label || computerLabelFor(item.computer_id)) + ". " + message
+    reportError(text, item.computer_id, "")
+    if (fromNotice && !consoleOpen) queueNotice({ title: "ibara", body: text })
+  }
+  // An agent's question: answered with one of its options (any short answer when it has none),
+  // or dismissed, which tells the agent nobody will answer. The toast leaves once the computer
+  // confirms. ibara older than this console on either end can't do either; then Dismiss puts
+  // the question away here only (an update of that computer closes it for good).
+  function answerQuestion(ref, answer) {
+    var item = questionByRef(ref), text = String(answer || "")
+    if (!item || busy["answer:" + ref] || !text.trim() || text.length > 1000) return false
+    if (item.options.length && item.options.indexOf(text) === -1) return false
+    if (item.unreachable) { actionNotice = (item.label || computerLabelFor(item.computer_id)) + " isn't answering right now. You can answer once it's back."; return false }
+    sendToComputer("operator-answer-attention", item.computer_id, [ref, "--answer", text],
+      { ref: ref, question: true, answer: text, label: item.label || computerLabelFor(item.computer_id) }, "answer:" + ref)
+    return true
+  }
+  function dismissQuestion(ref) {
+    var item = questionByRef(ref)
+    if (!item || busy["answer:" + ref]) return false
+    if (item.unreachable) { hideQuestion(ref); actionNotice = "Dismissed here. " + (item.label || computerLabelFor(item.computer_id)) + " isn't answering, so its agent hasn't heard."; return true }
+    sendToComputer("operator-answer-attention", item.computer_id, [ref, "--dismiss"],
+      { ref: ref, question: true, dismiss: true, label: item.label || computerLabelFor(item.computer_id) }, "answer:" + ref)
+    return true
+  }
+  function questionByRef(ref) {
+    for (var i = 0; i < questions.length; i++) if (questions[i].ref === ref) return questions[i]
+    return null
+  }
+  function hideQuestion(ref) {
+    var hidden = Object.assign({}, hiddenQuestions)
+    hidden[ref] = true
+    hiddenQuestions = hidden
+  }
+  // The reply to an answer or a dismiss. An older ibara takes only approve or deny.
+  function questionAnswered(route, error, plain) {
+    var tooOld = !!error && /Choose approve or deny/.test(String(error.message || "") + " " + plain)
+    if (error && route.dismiss && tooOld) {
+      hideQuestion(route.ref)
+      actionNotice = "Dismissed here. ibara on " + route.label + " or on this computer is too old to close the question itself; updating it closes the question."
+    } else if (error) {
+      reportError(tooOld ? "ibara on " + route.label + " or on this computer is too old to answer an agent's question from here. Update ibara, or choose Dismiss."
+        : "ibara couldn't " + (route.dismiss ? "dismiss" : "answer") + " the question on " + route.label + ". " + plain, "", "")
+    } else {
+      attention = attention.filter(function(entry) { return entry.ref !== route.ref })
+      actionNotice = route.dismiss ? "Dismissed the question on " + route.label + "." : "Answered on " + route.label + ": " + StatusModel.clip(route.answer, 120)
+    }
+    loadAttention()
+  }
+  // One desktop notification per new approval, with Approve and Deny on it, Always Allow on a
+  // send, spend or delete, and Allow and Not Now on an agent's request to stop asking (notify-send --action;
+  // the Omarchy shell's notification server shows the actions). Each waits in its own process,
+  // which prints the notification's id, then the action chosen.
+  property var approvalNotices: ({})
+  property var noticedApprovals: ({})
+  function notifyApprovals() {
+    if (!consoleBool("approval_notifications", true)) return
+    var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
+    for (var i = 0; i < approvals.length; i++) {
+      var item = approvals[i]
+      if (seen[item.ref]) continue
+      seen[item.ref] = true
+      fresh = true
+      var name = item.label || computerLabelFor(item.computer_id)
+      var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name })
+      var actions = item.stopAsking ? ["-A", "approve=Allow", "-A", "deny=Not Now"]
+        : ["-A", "approve=Approve", "-A", "deny=Deny"].concat(item.effect ? ["-A", "always=Always Allow"] : [])
+      notice.command = ["notify-send", "-a", "ibara", "-p"].concat(actions, [name + (item.stopAsking ? " needs your answer" : " needs your approval"), StatusModel.approvalNoticeBody(item)])
+      notice.running = true
+      notices[item.ref] = notice
+    }
+    if (fresh) { noticedApprovals = seen; approvalNotices = notices }
+  }
+  function approvalNoticeLine(notice, line) {
+    var text = String(line || "").trim()
+    if (/^[0-9]{1,10}$/.test(text) && !notice.noticeId) { notice.noticeId = text; return }
+    if ((text === "approve" || text === "deny" || text === "always") && !notice.answered) {
+      notice.answered = true
+      answerApproval(notice.ref, text, true, notice.label)
+    }
+  }
+  function approvalNoticeClosed(notice) {
+    if (approvalNotices[notice.ref] === notice) { var notices = Object.assign({}, approvalNotices); delete notices[notice.ref]; approvalNotices = notices }
+    notice.destroy()
+  }
+  // An approval answered anywhere else, or gone, closes its notification. One from a computer
+  // that isn't answering stays open: its approval still waits there.
+  function closeStaleApprovalNotices() {
+    for (var ref in approvalNotices) {
+      var notice = approvalNotices[ref]
+      if (notice.answered || !notice.noticeId || approvals.some(function(item) { return item.ref === ref })) continue
+      if (attentionUnreachable.indexOf(notice.computerId) !== -1) continue
+      notice.answered = true
+      var closer = oneShotComponent.createObject(root)
+      closer.command = ["busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "CloseNotification", "u", notice.noticeId]
+      closer.running = true
+    }
+  }
+
+  // ---- Pause and Resume a computer's agents. Either can be undone by the other, so each happens
+  // at once and the console offers the other as Undo (agentsPaused).
+  signal agentsPaused(string computerId, bool paused)
+  function pauseAgents(computerId) { return changePause(computerId, "pause") }
+  function resumeAgents(computerId) { return changePause(computerId, "resume") }
+  function changePause(computerId, op) {
+    var id = String(computerId || "")
+    if (!sessions[id] || busy["pause:" + id]) return false
+    sendToComputer("operator-control", id, ["--op", op], { pauseOp: op }, "pause:" + id)
+    return true
+  }
+  // ---- Fix It: runs the repair a computer asked a person for (repair.needs_person.fix).
+  function repair(computerId, fix) {
+    var id = String(computerId || "")
+    if (!sessions[id] || !StatusModel.fixDescription(fix) || busy["repair:" + id]) return false
+    sendToComputer("operator-repair", id, [String(fix)], { fix: String(fix) }, "repair:" + id)
+    return true
+  }
+  // ---- Restart, Shut Down, Sleep, Lock and Update. The console confirms those that can't be undone.
+  function power(computerId, action) {
+    var id = String(computerId || "")
+    if (!sessions[id] || ["restart", "shutdown", "sleep", "lock", "update"].indexOf(action) === -1 || busy["power:" + id]) return false
+    sendToComputer("operator-power", id, ["--action", action], { action: action }, "power:" + id)
+    return true
+  }
+  // ---- Wake: this computer, or another on the same network, sends the wake signal.
+  function canWake(computerId) {
+    var s = sessions[String(computerId || "")]
+    return !!s && !!s.wake && s.connection === "offline"
+  }
+  function wake(computerId) {
+    var id = String(computerId || "")
+    if (!sessions[id] || busy["wake:" + id]) return false
+    setBusy("wake:" + id, "wake")
+    sideSend(["wake", id], { computerId: id, busyKey: "wake:" + id })
+    return true
+  }
+  // ---- Apply Theme to Fleet: this computer's Omarchy theme on every other computer that is on.
+  // themeRun: null, or { state: "applying" | "done" | "failed", theme, results, message }.
+  property var themeRun: null
+  function applyThemeToFleet() {
+    if (busy["theme-fleet"]) return false
+    setBusy("theme-fleet", "applying")
+    themeRun = { state: "applying", theme: "", results: [], message: "" }
+    sideSend(["theme-fleet"], { busyKey: "theme-fleet" })
+    return true
+  }
+  function dismissThemeRun() { if (!busy["theme-fleet"]) themeRun = null }
+  // ---- While you were away: what happened on each computer since this console last looked.
+  property var away: ({ since: 0, computers: [] })
+  function loadAway() {
+    if (busy["away"]) return
+    setBusy("away", "reading")
+    sideSend(["away"], { busyKey: "away" })
+  }
+  function markAwaySeen() {
+    if (busy["away-seen"]) return
+    setBusy("away-seen", "saving")
+    sideSend(["away-seen"], { busyKey: "away-seen" })
+  }
+
+  // ---- settings: this console's own (`settings`) and each computer's (`operator-settings`), as
+  // the sections ibarad describes. A change applies at once; one that worked is offered back as
+  // Undo (settingsApplied, with each setting's value before and after).
+  property var consoleSettings: []
+  property bool consoleSettingsLoaded: false
+  property string consoleSettingsError: ""
+  // "computerId:key" (computerId empty for this console) → a plain sentence under that setting.
+  property var settingErrors: ({})
+  // A change that worked: what changed, and one sentence for the message that offers Undo.
+  signal settingsApplied(string computerId, var changes, string text)
+  function consoleSetting(key, fallback) { return StatusModel.settingValue(consoleSettings, key, fallback) }
+  function consoleBool(key, fallback) { var v = consoleSetting(key, fallback); return v === true || v === "true" }
+  // Seconds between pictures of each computer on the fleet page (the Fleet pictures setting).
+  readonly property int tilePreviewMs: Math.max(1, Math.min(60, Number(consoleSetting("fleet_preview_seconds", 5)) || 5)) * 1000
+  function loadConsoleSettings() {
+    if (busy["settings:get"]) return
+    setBusy("settings:get", "reading")
+    sideSend(["settings", "get"], { busyKey: "settings:get", settingsAction: "get" })
+  }
+  function settingsList(computerId) { return computerId ? (String(computerId) === scopedComputerId ? computerSettings : []) : consoleSettings }
+  function setSettingError(computerId, key, message) {
+    var errors = Object.assign({}, settingErrors), at = String(computerId || "") + ":" + key
+    if (message) errors[at] = message
+    else if (errors[at] !== undefined) delete errors[at]
+    else return
+    settingErrors = errors
+  }
+  function sendSettings(computerId, rest, route) {
+    var id = String(computerId || ""), key = route.busyKey
+    if (busy[key]) return false
+    if (id) sendToComputer("operator-settings", id, rest, route, key)
+    else { setBusy(key, rest[0]); sideSend(["settings"].concat(rest), route) }
+    return true
+  }
+  function changeSetting(computerId, key, value, undoing) {
+    var setting = StatusModel.findSetting(settingsList(computerId), key)
+    if (!setting) return false
+    setSettingError(computerId, key, "")
+    return sendSettings(computerId, ["set", key, String(value)], { busyKey: "setting:" + String(computerId || "") + ":" + key, settingsAction: "set",
+      settingKey: key, undoing: undoing === true, before: [{ key: key, title: setting.title, value: StatusModel.settingText(setting.value) }] })
+  }
+  function resetSetting(computerId, key) {
+    var setting = StatusModel.findSetting(settingsList(computerId), key)
+    if (!setting) return false
+    setSettingError(computerId, key, "")
+    return sendSettings(computerId, ["reset", key], { busyKey: "setting:" + String(computerId || "") + ":" + key, settingsAction: "reset",
+      settingKey: key, before: [{ key: key, title: setting.title, value: StatusModel.settingText(setting.value) }] })
+  }
+  function resetSection(computerId, sectionId) {
+    var list = settingsList(computerId), section = null
+    for (var i = 0; i < list.length; i++) if (list[i].id === sectionId) section = list[i]
+    if (!section) return false
+    var before = section.settings.map(function(s) { return { key: s.key, title: s.title, value: StatusModel.settingText(s.value) } })
+    return sendSettings(computerId, ["reset", "--section", sectionId], { busyKey: "section:" + String(computerId || "") + ":" + sectionId, settingsAction: "reset", section: section.title, before: before })
+  }
+  // Undo: each setting back to the value it had. Sent as it is, so it works after the person has
+  // left that computer (its settings are only listed while it is open).
+  function restoreSettings(computerId, changes) {
+    for (var i = 0; i < changes.length; i++) {
+      var change = changes[i]
+      setSettingError(computerId, change.key, "")
+      sendSettings(computerId, ["set", change.key, String(change.before)], { busyKey: "setting:" + String(computerId || "") + ":" + change.key,
+        settingsAction: "set", settingKey: change.key, undoing: true, before: [{ key: change.key, title: change.title, value: change.after }] })
+    }
+  }
+  // The keys on their way and the refusals, per setting, for one computer's list ("" for this console).
+  function settingsBusyFor(computerId) {
+    var prefix = "setting:" + String(computerId || "") + ":", out = ({})
+    for (var key in busy) if (key.indexOf(prefix) === 0) out[key.substring(prefix.length)] = busy[key] === "terminal" ? "Finish in the terminal…" : true
+    return out
+  }
+  function settingsErrorsFor(computerId) {
+    var prefix = String(computerId || "") + ":", out = ({})
+    for (var key in settingErrors) if (key.indexOf(prefix) === 0) out[key.substring(prefix.length)] = settingErrors[key]
+    return out
+  }
+  // A setting's value in words: on or off, a choice's label, or the value itself.
+  function settingWords(setting, text) {
+    if (!setting) return text
+    if (setting.type === "bool") return text === "true" ? "on" : "off"
+    if (setting.type === "choice") for (var i = 0; i < setting.choices.length; i++) if (setting.choices[i].value === text) return setting.choices[i].label
+    return text === "" ? "blank" : text
+  }
+
+  // ---- Live Video (Preview): with the Live Video setting on, a computer whose ibara can stream
+  // (its status's `video`) plays video on its fleet card and Screen tab (LiveVideo.qml). Each one
+  // showing asks ibarad to open the stream (`video open`) and asks again every 5 s; ibarad closes
+  // a stream nobody renews within 10 s, and the last one to let go closes it (`video close`). A
+  // stream that fails, stalls or is refused isn't tried again for a minute; pictures carry on.
+  readonly property bool liveVideo: consoleBool("live_video", false)
+  // False once the video player can't load here (QtMultimedia is missing): pictures only.
+  property bool videoPlayerWorks: true
+  // "computerId:WxH" → { path, state } from ibarad's last answer for that stream.
+  property var videoStreams: ({})
+  // holder → computerId, for each LiveVideo showing a stream.
+  property var videoHolders: ({})
+  // holder → computerId while its video plays: that computer's pictures come every 30 s.
+  property var videoPlaying: ({})
+  // computerId → ms before which its video isn't tried again.
+  property var videoRetryAt: ({})
+  // computerId → the plain reason ibarad gave for not streaming it.
+  property var videoRefused: ({})
+  // Streams asked for and not yet answered, and computers with a stream open; not bound.
+  property var videoAsking: ({})
+  property var videoOpen: ({})
+  property int videoHolderSequence: 0
+  function newVideoHolder() { videoHolderSequence += 1; return "video-" + videoHolderSequence }
+  function videoAllowed(computerId) {
+    var id = String(computerId || ""), s = sessions[id]
+    return liveVideo && videoPlayerWorks && panelOpen && !denied && !!s && s.trust_state === "verified" && s.connection === "ready"
+      && !!s.controller_epoch && !s.holds_control && !!s.video && s.video.capable === true && nowMs >= Number(videoRetryAt[id] || 0)
+  }
+  function videoPlayingFor(computerId) {
+    for (var holder in videoPlaying) if (videoPlaying[holder] === computerId) return true
+    return false
+  }
+  // The size to stream: the picture's shape inside the shown box, at most 640 × 360, even.
+  function videoSize(boxWidth, boxHeight, aspect) {
+    if (!(boxWidth > 0 && boxHeight > 0 && aspect > 0)) return null
+    var w = boxWidth, h = boxHeight
+    if (w / h > aspect) w = h * aspect
+    else h = w / aspect
+    var scale = Math.min(1, 640 / w, 360 / h)
+    w = Math.floor(w * scale / 16) * 16
+    h = Math.floor(h * scale / 2) * 2
+    return w >= 64 && h >= 36 ? { width: w, height: h } : null
+  }
+  // A LiveVideo that shows computerId asks for (or renews) its stream.
+  function holdVideo(holder, computerId, width, height) {
+    var id = String(computerId || "")
+    if (!holder || !id) return
+    if (videoHolders[holder] !== undefined && videoHolders[holder] !== id) releaseVideo(holder)
+    if (!videoAllowed(id)) { releaseVideo(holder); return }
+    if (videoHolders[holder] !== id) {
+      var holders = Object.assign({}, videoHolders)
+      holders[holder] = id
+      videoHolders = holders
+    }
+    var key = id + ":" + width + "x" + height
+    if (videoAsking[key]) return
+    videoAsking[key] = true
+    videoOpen[id] = true
+    sideSend(["video", "open", id, "--width", String(width), "--height", String(height)], { videoAction: "open", videoComputer: id, videoKey: key })
+  }
+  function releaseVideo(holder) {
+    var id = videoHolders[holder]
+    setVideoPlaying(holder, id, false)
+    if (id === undefined) return
+    var holders = Object.assign({}, videoHolders)
+    delete holders[holder]
+    videoHolders = holders
+    for (var other in holders) if (holders[other] === id) return
+    closeVideo(id)
+  }
+  function closeVideo(computerId) {
+    var streams = {}, changed = false
+    for (var key in videoStreams) {
+      if (key.indexOf(computerId + ":") === 0) changed = true
+      else streams[key] = videoStreams[key]
+    }
+    if (changed) videoStreams = streams
+    if (!videoOpen[computerId]) return
+    delete videoOpen[computerId]
+    sideSend(["video", "close", computerId], { videoAction: "close", videoComputer: computerId })
+  }
+  function setVideoPlaying(holder, computerId, playing) {
+    if (!holder || (videoPlaying[holder] !== undefined) === playing) return
+    var next = Object.assign({}, videoPlaying)
+    if (playing) next[holder] = String(computerId)
+    else delete next[holder]
+    videoPlaying = next
+  }
+  // Video that failed or stalled on a computer: pictures only, and no video there for a minute.
+  function videoFailed(computerId) {
+    var id = String(computerId || "")
+    var retry = Object.assign({}, videoRetryAt)
+    retry[id] = Date.now() + 60000
+    videoRetryAt = retry
+    for (var holder in videoPlaying) if (videoPlaying[holder] === id) setVideoPlaying(holder, id, false)
+    closeVideo(id)
+  }
+  function consumeVideo(route, data, error) {
+    var id = route.videoComputer
+    if (route.videoAction !== "open") return
+    delete videoAsking[route.videoKey]
+    var held = false
+    for (var holder in videoHolders) if (videoHolders[holder] === id) held = true
+    if (!held) return
+    var refused = Object.assign({}, videoRefused)
+    if (!error && typeof data.unsupported === "string") {
+      refused[id] = StatusModel.clip(data.unsupported, 200) || "This computer can't stream video."
+      videoRefused = refused
+      videoFailed(id)
+      return
+    }
+    if (error || !StatusModel.videoFile(data.path, id)) { videoFailed(id); return }
+    if (refused[id] !== undefined) { delete refused[id]; videoRefused = refused }
+    var stream = { path: String(data.path), state: data.state === "playing" ? "playing" : "starting" }
+    var known = videoStreams[route.videoKey]
+    if (known && known.path === stream.path && known.state === stream.state) return
+    var streams = Object.assign({}, videoStreams)
+    streams[route.videoKey] = stream
+    videoStreams = streams
+  }
+  // For Settings: each computer that can't stream, with its reason.
+  readonly property string videoReasons: {
+    var lines = []
+    for (var id in sessions) {
+      var s = sessions[id]
+      var reason = videoRefused[id] || (s && s.video && s.video.capable !== true ? s.video.reason : "")
+      if (reason) lines.push(computerLabelFor(id) + ": " + reason)
+    }
+    return lines.sort().join("\n")
+  }
+
+  // ---- files dropped on a computer's card or view. Each goes with the Files tab's send
+  // (operator-file-send) into the computer's shared folder, one after another, and shows in
+  // Transfers. drops[computerId] = { files: [{path, name}], index, rootId, sent, failed: [{name,
+  // message}], state: "starting" | "sending" | "done", current, doneAt }.
+  property var drops: ({})
+  function setDrop(id, fields) {
+    var next = Object.assign({}, drops)
+    next[id] = Object.assign({}, drops[id] || {}, fields)
+    drops = next
+  }
+  // A finished drop with nothing left to say leaves the card after a few seconds; one with a
+  // failure stays until dismissed.
+  function expireDrops() {
+    for (var id in drops) if (drops[id].state === "done" && !drops[id].failed.length && Date.now() - drops[id].doneAt > 6000) dismissDrop(id)
+  }
+  function dismissDrop(computerId) {
+    if (!drops[computerId]) return
+    var next = Object.assign({}, drops)
+    delete next[computerId]
+    drops = next
+  }
+  function dropFiles(computerId, urls) {
+    var id = String(computerId || ""), files = [], skipped = 0
+    var list = Array.isArray(urls) ? urls : []
+    for (var i = 0; i < list.length && files.length < 50; i++) {
+      var path = localPath(list[i]), name = humanBaseName(path)
+      if (String(list[i]).indexOf("file://") !== 0 || !humanAbsolutePath(path) || !humanFileSegment(name)) { skipped += 1; continue }
+      files.push({ path: path, name: name })
+    }
+    if (!sessions[id]) return false
+    if (!files.length) { reportError("ibara sends files you drop from your file manager. " + (skipped ? "What you dropped isn't a file ibara can send." : "Nothing was dropped."), "", ""); return false }
+    var current = drops[id]
+    if (current && (current.state === "starting" || current.state === "sending")) { setDrop(id, { files: current.files.concat(files) }); return true }
+    setDrop(id, { files: files, index: 0, rootId: "", sent: 0, failed: [], state: "starting", current: files[0].name, doneAt: 0 })
+    sendToComputer("operator-files", id, ["--op", "files_roots"], { drop: true,
+      failed: function(message) { root.finishDrop(id, message) } }, "drop:" + id)
+    return true
+  }
+  function sendNextDrop(id) {
+    var d = drops[id]
+    if (!d) return
+    if (d.index >= d.files.length) { finishDrop(id, ""); return }
+    var file = d.files[d.index], s = sessions[id]
+    var pin = { phase: "running", notice: "", computerId: id, rootId: d.rootId, remote: file.name, local: file.path, jobId: "",
+      transferId: "transfer-" + (++transferSequence), direction: "send", total: 0, openWhenDone: false }
+    syncTransfer(pin)
+    setDrop(id, { state: "sending", current: file.name })
+    sendToComputer("operator-file-send", id, ["--root", d.rootId, "--remote", file.name, "--local", file.path], { drop: true, pin: pin,
+      failed: function(message) { root.droppedFileSettled(id, pin, null, message) } }, "drop:" + id)
+  }
+  function droppedFileSettled(id, pin, data, message) {
+    var d = drops[id]
+    if (!d) return
+    var receipt = data ? humanFileReceipt(data) : null, jobId = data ? humanJobId(data.job_id) : ""
+    var ok = !!data && data.state === "verified" && !!receipt && !!jobId && data.computer_id === id && data.root_id === pin.rootId && data.remote_path === pin.remote
+    if (ok) {
+      var settled = copyHumanPin(pin, "verified", "Verified. Sent " + pin.remote + ". " + receipt.size + " bytes, sha256 " + receipt.sha + ".", jobId)
+      settled.receipt = receipt
+      syncTransfer(settled)
+      setDrop(id, { sent: d.sent + 1, index: d.index + 1 })
+    } else {
+      var why = message || "What " + computerLabelFor(id) + " reported didn't match what was sent. Look for it in the Files tab before sending it again."
+      syncTransfer(copyHumanPin(pin, "failed", "Failed. " + why, ""))
+      setDrop(id, { failed: d.failed.concat([{ name: pin.remote, message: why }]), index: d.index + 1 })
+    }
+    sendNextDrop(id)
+  }
+  function finishDrop(id, message) {
+    var d = drops[id]
+    if (!d) return
+    var name = computerLabelFor(id)
+    if (message) { setDrop(id, { state: "done", doneAt: Date.now(), failed: d.failed.concat([{ name: "", message: message }]) }); reportError("Nothing was sent to " + name + ". " + message, id, ""); return }
+    setDrop(id, { state: "done", doneAt: Date.now() })
+    if (d.sent) actionNotice = "Sent " + (d.sent === 1 && d.files.length === 1 ? d.files[0].name : d.sent + (d.sent === 1 ? " file" : " files")) + " to " + name + ", in its " + d.rootId + " folder."
+    if (d.failed.length) reportError(d.failed.map(function(f) { return f.name + " wasn't sent: " + f.message }).join(" "), id, "")
+  }
+
+  // Answers on the side lane for the everyday features above.
+  function consumeEveryday(route, data, error, message) {
+    var op = route.op, id = String(route.computerId || "")
+    if (route.busyKey) setBusy(route.busyKey, "")
+    // A per-computer answer names that computer; anything else is not its answer.
+    var result = data.result && typeof data.result === "object" ? data.result : ({})
+    if (id && !error && data.computer_id !== undefined && data.computer_id !== id) {
+      error = { code: "MISMATCH" }
+      message = "The answer came from a different computer than " + computerLabelFor(id) + ", so ibara can't tell whether this worked."
+    }
+    var plain = error ? (id ? plainError(message, id, false) : message) : ""
+    if (op === "fleet-attention") {
+      if (!error) {
+        var unreachable = (Array.isArray(data.unreachable) ? data.unreachable : []).filter(function(c) { return StatusModel.requestId(c) }).map(String)
+        if (!sameValue(attentionUnreachable, unreachable)) attentionUnreachable = unreachable
+        applyAttention(StatusModel.attentionView(data))
+      }
+    } else if (op === "operator-answer-attention" && route.question) {
+      questionAnswered(route, error, plain)
+    } else if (op === "operator-answer-attention") {
+      var item = { computer_id: id, label: route.label }
+      if (error) { approvalFailed(item, route.answer, plain, route.fromNotice); loadAttention(); return }
+      attention = attention.filter(function(entry) { return entry.ref !== route.ref })
+      // Always Allow, or Allow on an agent's request to stop asking: what changed, and where to undo it.
+      if (result.allowed && typeof result.allowed === "object") {
+        var allowedText = StatusModel.allowedNotice(route.label, result.allowed, route.answer === "always")
+        agentAllowed(id, allowedText)
+        if (route.fromNotice && !consoleOpen) queueNotice({ title: "ibara", body: allowedText })
+      }
+      else if (route.stopAsking) actionNotice = route.answer === "approve" ? "Allowed on " + route.label + "." : "Nothing changed on " + route.label + ". The agent still asks you first."
+      else actionNotice = (route.answer === "approve" ? "Approved" : "Denied") + " on " + route.label + (route.summary ? ": " + StatusModel.clip(route.summary, 120) : ".")
+      loadAttention()
+    } else if (op === "operator-control") {
+      if (error) { reportError(plain || "ibara couldn't " + route.pauseOp + " " + computerLabelFor(id) + ".", id, error); recheckComputer(id); return }
+      var paused = result.paused === true
+      updateSession(id, { paused: paused, pause_origin: paused ? String(result.pause_origin || "person") : null,
+        owner_name: typeof result.owner === "string" ? result.owner : sessions[id] && sessions[id].owner_name,
+        ownership_revision: result.ownership_revision || (sessions[id] && sessions[id].ownership_revision) })
+      agentsPaused(id, paused)
+      recheckComputer(id)
+    } else if (op === "operator-repair") {
+      if (error) { reportError(plain || "Fix It didn't run on " + computerLabelFor(id) + ".", id, error); return }
+      var state = String(result.state || "")
+      if (state === "fixed" || state === "restarting") {
+        updateSession(id, { needs_person: null })
+        attention = attention.filter(function(entry) { return !(entry.kind === "repair" && entry.computer_id === id) })
+        actionNotice = StatusModel.clip(result.message, 240) || (state === "restarting" ? computerLabelFor(id) + " is restarting ibara. It's back in a few seconds." : computerLabelFor(id) + " is working again.")
+        if (state === "restarting") forgetControllerEpoch(id)
+      } else {
+        reportError(StatusModel.clip(result.message, 240) || computerLabelFor(id) + " still needs you. Restart it, or check it in person.", id, "")
+      }
+      recheckComputer(id)
+      loadAttention()
+    } else if (op === "operator-power") {
+      if (error) { reportError(plain || "ibara couldn't do that on " + computerLabelFor(id) + ".", id, error); return }
+      var name = computerLabelFor(id), s = sessions[id]
+      if (route.action === "restart") actionNotice = name + " is restarting." + (result.disk_password_warning === true ? " Its disk asks for its password when it starts, so someone there must type it before ibara can reach it again." : " ibara reconnects when it's back.")
+      else if (route.action === "shutdown") actionNotice = name + " is shutting down." + (s && s.wake ? " Choose Wake to turn it on again." : "")
+      else if (route.action === "sleep") actionNotice = name + " is going to sleep. Choose Wake to wake it."
+      else if (route.action === "lock") actionNotice = name + "'s screen is locked."
+      else actionNotice = name + " is updating. It may restart when it finishes."
+      // It stops answering now; the card says why, and dims, until it answers again.
+      if (["restart", "shutdown", "sleep"].indexOf(route.action) !== -1) updateSession(id, { power_state: route.action, connection: "offline" })
+    } else if (op === "wake") {
+      if (error) { reportError(plain || "ibara couldn't wake " + computerLabelFor(id) + ".", id, error); return }
+      var via = String(data.sent_via || "")
+      actionNotice = data.sure === false
+        ? "Sent the signal to wake " + computerLabelFor(id) + " from this computer. If " + computerLabelFor(id) + " is on another network, it won't hear it."
+        : "Sent " + computerLabelFor(id) + " the signal to wake" + (via && via !== "this computer" ? ", through " + via : "") + ". It shows here once it's on."
+      updateSession(id, { power_state: "waking" })
+      clearRetryState(id)
+    } else if (op === "theme-fleet") {
+      if (error) { themeRun = { state: "failed", theme: "", results: [], message: plain || "ibara couldn't apply the theme." }; return }
+      var view = StatusModel.themeResultsView(data)
+      themeRun = { state: "done", theme: view.theme, results: view.results, message: "" }
+    } else if (op === "away") {
+      // Older cores have no timeline; the fleet simply shows none.
+      if (!error) { var awayNow = StatusModel.awayView(data); if (!sameValue(away, awayNow)) away = awayNow }
+    } else if (op === "whats-new") {
+      // Older cores have no What's New; nothing shows.
+      whatsNew = !error && typeof data.version === "string" && data.version ? { version: data.version, notes: (Array.isArray(data.notes) ? data.notes : []).map(function(n) { return String(n) }) } : null
+    } else if (op === "unattended-boot") {
+      // Older cores have no such command; the entry simply doesn't show.
+      unattendedBootSections = error ? [] : StatusModel.unattendedBootSections(data)
+      var shown = StatusModel.findSetting(unattendedBootSections, "unattended_boot")
+      if (unattendedBootWanted !== null && shown && shown.value === unattendedBootWanted) settleUnattendedBoot("")
+    } else if (op === "unattended-boot-lock") {
+      if (error) { setSettingError("", "lock_at_sign_in", plain || "ibara couldn't change the lock at sign-in."); return }
+      unattendedBootSections = StatusModel.unattendedBootSections(data)
+      // Why starting without the password was refused may have been the lock.
+      if (unattendedBootWanted === null) setSettingError("", "unattended_boot", "")
+    } else if (op === "away-seen") {
+      if (error) { actionError = plain || "ibara couldn't mark these as seen."; return }
+      away = { since: Date.now(), computers: [] }
+    } else if (op === "settings" || op === "operator-settings") {
+      consumeSettings(route, id, id ? result : data, error, plain)
+    } else if (op === "operator-files" && route.drop) {
+      var roots = error ? null : sanitizedFileRoots(result.roots)
+      if (!roots || !roots.length) { finishDrop(id, error ? plain : computerLabelFor(id) + " has no shared folder to receive files."); return }
+      var root_ = roots.filter(function(r) { return r.root_id === "transfers" })[0] || roots[0]
+      setDrop(id, { rootId: root_.root_id })
+      sendNextDrop(id)
+    } else if (op === "operator-file-send" && route.drop) {
+      droppedFileSettled(id, route.pin, error ? null : data, error ? plain : "")
+    }
+  }
+  function consumeSettings(route, computerId, payload, error, message) {
+    var action = route.settingsAction
+    if (action === "get" && !computerId) {
+      if (error) { consoleSettingsError = message || "ibara couldn't read its settings."; return }
+      consoleSettings = StatusModel.settingsSections(payload)
+      consoleSettingsError = ""
+      consoleSettingsLoaded = true
+      return
+    }
+    // An Undo for a computer whose settings this console no longer lists (the person left it, or
+    // its list was cleared) has no setting row to show its answer on.
+    var blind = route.undoing && computerId && !settingsList(computerId).length
+    if (error) {
+      if (route.settingKey && !blind) setSettingError(computerId, route.settingKey, message || "That didn't change.")
+      else if (blind) actionError = "ibara couldn't undo " + (route.before[0] ? route.before[0].title : "that change") + " on " + computerLabelFor(computerId) + ". " + (message || "")
+      else actionError = message || "ibara couldn't reset these settings."
+      return
+    }
+    // A computer's name is the fleet's name for it too.
+    if (computerId && route.before.some(function(b) { return b.key === "name" })) loadComputers()
+    if (blind) return
+    var list = settingsList(computerId)
+    var next = StatusModel.settingsAfter(list, payload)
+    if (!computerId) consoleSettings = next
+    else if (computerId === scopedComputerId) { computerSettings = next; rememberScoped("computer-settings") }
+    var changes = []
+    for (var i = 0; i < route.before.length; i++) {
+      var now = StatusModel.findSetting(next, route.before[i].key)
+      var after = now ? StatusModel.settingText(now.value) : route.before[i].value
+      if (after !== route.before[i].value) changes.push({ key: route.before[i].key, title: route.before[i].title, before: route.before[i].value, after: after })
+    }
+    if (!changes.length || route.undoing) return
+    var where = computerId ? " on " + computerLabelFor(computerId) : ""
+    var text = route.section ? route.section + " settings" + where + " are back to their defaults."
+      : changes[0].title + where + (route.settingsAction === "reset" ? " is back to " : " is now ") + settingWords(StatusModel.findSetting(next, changes[0].key), changes[0].after) + "."
+    // Ask before agents send, spend or delete says what it now means, and from Settings it
+    // reaches every computer with the next approvals read, which goes now.
+    var asking = changes.filter(function(c) { return c.key === "agents_ask_first" || c.key === "ask_first" })[0]
+    if (asking && !route.section) text += StatusModel.askFirstMeaning(asking.key, asking.after, StatusModel.findSetting(next, asking.key))
+    if (!computerId && changes.some(function(c) { return c.key === "agents_ask_first" })) loadAttention()
+    settingsApplied(computerId, changes, text)
+  }
+
+  function clearProtectedViews() {
+    accessGeneration += 1
+    previewGeneration += 1
+    previewQueue = []
+    releasePreviewLanes()
+    clearWatchAcknowledgment()
+    var protectedSessions = Object.assign({}, sessions)
+    for (var computerId in protectedSessions) if (protectedSessions[computerId])
+      protectedSessions[computerId] = Object.assign({}, protectedSessions[computerId], { frame: null, capture_age_ms: null })
+    publishSessions(protectedSessions)
+    followedTasks = ({})
+    attention = []
+    for (var i = 0; i < pendingNotices.length; i++) logDroppedFollowNotice(pendingNotices[i], "protected-views-cleared")
+    pendingNotices = []
+    readQueue = []
+    readErrors = ({})
+    selectedTaskLoading = false
+    selectedProcedureLoading = false
+    tasks = []; artifacts = []; procedures = []; accessTable = null; computerSettings = []
+    tasksLoaded = false; artifactsLoaded = false; proceduresLoaded = false
+    selectedTask = null; selectedTaskDetail = null; selectedProcedure = null
+    selectedTaskDetailRef = ""
+    selectedTaskDetailObservedAt = ""
+    selectedTaskRef = ""; selectedArtifactRef = ""; selectedProcedureRef = ""
+    health = ({}); logLines = []; actionNotice = ""
+    scopedCache = ({}); scopedReadAt = ({})
+    clearRemoteFiles()
+  }
+
+
+  function consumeRead(lane, text) {
+    var request = activeReads[lane]
+    var active = activeReads.slice()
+    active[lane] = null
+    activeReads = active
+    if (!request) { Qt.callLater(root.drainReads); return }
+    var kind = request.kind
+    try {
+      var parsed = StatusModel.parseEnvelope(text)
+      if (request.access !== accessGeneration || (parsed.request_id && parsed.request_id !== request.requestId)) {
+        if (String(kind).indexOf("operator-files-") === 0) discardRemoteFileRead(kind, request.ref, "Failed. This file list no longer matches the current request. Refresh the folder and try again.")
+        return
+      }
+      // A computer-scoped reply belongs to the scope that asked. Its refusal stays with that
+      // computer's tab: it never clears other computers' views.
+      if (request.scoped) {
+        if (request.scope.generation !== scopeGeneration || request.scope.id !== scopedComputerId) return
+        if (parsed.error) {
+          var scopedMessage = plainError(parsed.error.message || parsed.error.code || "Could not load this information.", request.scope.id, false)
+          var scopedErrors = Object.assign({}, readErrors)
+          // A refusal drops everything kept for this computer; any other failure drops that list.
+          if (StatusModel.accessDenied(parsed)) {
+            forgetComputerCaches(request.scope.id)
+            for (var c = 0; c < cachedReadKinds.length; c++) forgetScopedKind(request.scope.id, cachedReadKinds[c])
+          } else if (cachedReadKinds.indexOf(kind) !== -1) forgetScopedKind(request.scope.id, kind)
+          scopedErrors[kind] = scopedMessage
+          readErrors = scopedErrors
+          // A restarted computer has a new connection: ibara reconnects, then the tab reads again.
+          if (targetEpochChanged(parsed.error)) { forgetControllerEpoch(request.scope.id); Qt.callLater(root.refreshComputerSessions) }
+          return
+        }
+        if (!scopedReplyCurrent(request.scope, parsed)) throw new Error("The reply came from a different computer than the one selected.")
+      }
+      if (kind.indexOf("session-status:") === 0 && !sameSessionStatusRequest(request)) return
+      if (kind.indexOf("follow-task:") === 0 && !sameFollowStatusRequest(request)) return
+      if (kind.indexOf("session-status:") === 0 && (StatusModel.accessDenied(parsed) || parsed.error)) {
+        var deniedByAccess = StatusModel.accessDenied(parsed), error = parsed.error || ({})
+        // ibara on this computer stopped: nothing is known about the computer, so it keeps its
+        // last known state (the console says ibara isn't running).
+        if (String(error.code || "") === "DAEMON_UNAVAILABLE") return
+        // No reply is not a refusal: like a preview that timed out or lost its transport, the
+        // computer is offline and keeps its last frame, grayed.
+        var unreachable = String(error.code || "") === "TIMEOUT" || /^Selected operator transport (timed out|closed|failed)/.test(String(error.message || ""))
+        if (unreachable && sessions[request.ref]) {
+          var offlineSessions = Object.assign({}, sessions)
+          offlineSessions[request.ref] = Object.assign({}, sessions[request.ref], { connection: "offline", frame_error: plainError(String(error.message || error.code), request.ref, true) })
+          publishSessions(offlineSessions)
+          deferSessionRetry(request.ref)
+          return
+        }
+        if (deniedByAccess) clearDeniedTarget(request.sessionSnapshot, request.sessionSnapshot.followSnapshot)
+        var deniedSession = sessions[request.ref]
+        if (deniedSession) {
+          invalidateTargetPreviews(request.ref)
+          var deniedSessions = Object.assign({}, sessions)
+          var epochChanged = targetEpochChanged(error)
+          deniedSessions[request.ref] = Object.assign({}, deniedSession, {
+            connection: epochChanged ? "loading" : "unauthorized", frame: null, capture_age_ms: null,
+            controller_epoch: epochChanged ? "" : deniedSession.controller_epoch,
+            active_task_ref: epochChanged ? "" : deniedSession.active_task_ref, active_task: null,
+            frame_error: plainError(String(error.message || error.code || "This computer refused access."), request.ref, false)
+          })
+          publishSessions(deniedSessions)
+          clearWatchAcknowledgment(request.ref)
+          if (!epochChanged) { deferSessionRetry(request.ref); forgetComputerCaches(request.ref) }
+          if (epochChanged) {
+            clearTargetEpoch(request.ref, deniedSession.controller_epoch)
+            Qt.callLater(root.refreshComputerSessions)
+          }
+        }
+        return
+      }
+      if (kind.indexOf("follow-task:") === 0 && StatusModel.accessDenied(parsed)) {
+        if (sameFollowStatusRequest(request)) {
+          var current = sessions[request.ref]
+          invalidateTargetPreviews(request.ref)
+          var deniedSessions = Object.assign({}, sessions)
+          deniedSessions[request.ref] = Object.assign({}, current, {
+            connection: "unauthorized", frame: null, capture_age_ms: null, active_task: null,
+            frame_error: "You can no longer follow this task, so ibara stopped following it."
+          })
+          publishSessions(deniedSessions)
+          clearWatchAcknowledgment(request.ref)
+          clearDeniedTarget(request.followSnapshot, request.followSnapshot)
+          forgetComputerCaches(request.ref)
+        }
+        return
+      }
+      if (kind.indexOf("follow-task:") === 0 && parsed.error) {
+        return
+      }
+      if (kind.indexOf("operator-files-") === 0) {
+        applyRemoteFileRead(request, parsed)
+        return
+      }
+      // One computer refusing to open a session affects only that card, never the station. With
+      // ibara on this computer stopped, the computer keeps its last known state.
+      if (kind.indexOf("session-bootstrap:") === 0 && parsed.error && String(parsed.error.code || "") === "DAEMON_UNAVAILABLE") {
+        settleWaiters(String(request.ref), daemonAbsentMessage)
+        return
+      }
+      if (kind.indexOf("session-bootstrap:") === 0 && (parsed.error || StatusModel.accessDenied(parsed))) {
+        var bootError = parsed.error || ({}), bootMessage = String(bootError.message || bootError.code || "ibara couldn't connect to this computer. It will try again.")
+        var bootSession = sessions[request.ref]
+        if (bootSession) {
+          var bootDenied = /^(PERMISSION_DENIED|UNAUTHORIZED|AUTH_REQUIRED|GRANT_REVOKED|OPERATOR_TRANSPORT_UNAVAILABLE)\b/.test(bootMessage) ||
+            ["PERMISSION_DENIED", "UNAUTHORIZED", "AUTH_REQUIRED", "GRANT_REVOKED"].indexOf(String(bootError.code || "")) !== -1
+          invalidateTargetPreviews(request.ref)
+          if (bootDenied) forgetComputerCaches(request.ref)
+          var bootSessions = Object.assign({}, sessions)
+          bootSessions[request.ref] = Object.assign({}, bootSession, { connection: bootDenied ? "unauthorized" : "offline",
+            frame: null, capture_age_ms: null, active_task: null, frame_error: bootDenied ? StatusModel.clip(bootMessage, 200) : plainError(bootMessage, request.ref, true) })
+          publishSessions(bootSessions)
+          clearWatchAcknowledgment(request.ref)
+          deferSessionRetry(request.ref)
+          settleWaiters(String(request.ref), bootDenied ? plainError(bootMessage, request.ref, false) : computerLabelFor(request.ref) + " isn't answering. Check that it's on, then try again.")
+        }
+        return
+      }
+      if (kind === "directory" && StatusModel.accessDenied(parsed)) {
+        connectionState = "unauthorized"
+        clearProtectedViews()
+        return
+      }
+      if (parsed.error) {
+        if (kind === "pair-requests") pairRequests = []
+        // No directory answer is the one failure that affects the whole console: it shows until the next one works.
+        if (kind === "directory") {
+          failureCount += 1
+          connectionState = String(parsed.connection || "failed")
+          // Nothing answering means ibara here is missing or stopped: the fleet then says how to
+          // install it, or one toast says it isn't running; neither is a refresh error.
+          if (String(parsed.error.code || "") === "DAEMON_UNAVAILABLE") checkInstalled()
+          lastError = ibaraMissing || String(parsed.error.code || "") === "DAEMON_UNAVAILABLE" ? "" : plainError(parsed.error.message || parsed.error.code || "", "", true)
+        }
+        var errors = Object.assign({}, readErrors)
+        errors[kind] = String(parsed.error.message || parsed.error.code || "Could not load this information.")
+        readErrors = errors
+        return
+      }
+      var data = parsed.data || ({})
+      // A computer's answer over its pairing route is in `result`.
+      var result = data.result && typeof data.result === "object" && !Array.isArray(data.result) ? data.result : ({})
+      if (kind.indexOf("session-status:") === 0) {
+        var identity = sessions[request.ref]
+        var authenticated = data.result || ({})
+        if (identity && identity.controller_epoch && data.computer_id === request.ref && data.endpoint_id === identity.endpoint_id && data.binding_revision === identity.binding_revision && data.controller_epoch === identity.controller_epoch && authenticated.endpoint_id === identity.endpoint_id && authenticated.controller_epoch === identity.controller_epoch && authenticated.authorization_generation === identity.authorization_generation) {
+          var statusSessions = Object.assign({}, sessions)
+          if (authenticated.observation === "denied") {
+            statusSessions[request.ref] = Object.assign({}, identity, {
+              connection: "unauthorized", observation: "denied", outputs: [],
+              active_task_ref: "", active_task: null, frame: null, capture_age_ms: null,
+              frame_error: "This computer doesn't let you watch its screen. Its Access tab shows who can."
+            })
+            publishSessions(statusSessions)
+            invalidateTargetPreviews(request.ref)
+            clearWatchAcknowledgment(request.ref)
+          } else {
+          var outputs = Array.isArray(authenticated.outputs) ? authenticated.outputs.filter(function(output) {
+            return output && /^[A-Za-z0-9_.:-]{1,128}$/.test(String(output.display_id || ""))
+          }).slice(0, 16) : []
+          var displayId = identity.display_id
+          if (!outputs.some(function(output) { return output.display_id === displayId })) displayId = outputs.length === 1 ? outputs[0].display_id : ""
+          statusSessions[request.ref] = Object.assign({}, identity, {
+            connection: "ready", observation: authenticated.observation, outputs: outputs,
+            interactive_control: authenticated.interactive_control,
+            owner_name: authenticated.owner, ownership_revision: authenticated.ownership_revision,
+            holds_control: authenticated.holds_control === true, holds_control_epoch: identity.controller_epoch,
+            active_task_ref: /^[A-Za-z0-9_.:-]{1,128}$/.test(String(authenticated.active_task_ref || "")) ? authenticated.active_task_ref : "",
+            active_task: sanitizedActiveTask(authenticated.active_task, authenticated.active_task_ref),
+            last_task: sanitizedLastTask(authenticated.last_task),
+            files_access: ["available_if_root_approved", "denied"].indexOf(String(authenticated.files || "")) !== -1 ? String(authenticated.files) : "",
+            display_id: displayId,
+            frame: displayId === identity.display_id ? identity.frame : null,
+            frame_error: !displayId ? (outputs.length ? "Choose a display on this computer's Screen tab." : noDisplayNotice)
+              : displayId === identity.display_id ? (identity.connection === "unauthorized" ? "Preview pending" : identity.frame_error) : "Preview pending",
+            // Paused by a person waits for Resume; paused by ibara itself resumes on its own.
+            paused: authenticated.paused === true,
+            pause_origin: ["person", "system"].indexOf(authenticated.pause_origin) !== -1 ? authenticated.pause_origin : null,
+            needs_person: StatusModel.needsPersonView(authenticated.repair && authenticated.repair.needs_person),
+            wake: authenticated.wake !== undefined ? StatusModel.wakeView(authenticated.wake) : identity.wake || null,
+            power_state: "",
+            disk_password: authenticated.disk_password !== undefined ? authenticated.disk_password === true : identity.disk_password === true,
+            video: StatusModel.videoView(authenticated.video)
+          })
+          publishSessions(statusSessions)
+          clearRetryState(request.ref)
+          noteStatusMoments(request.ref, identity, statusSessions[request.ref])
+          }
+        } else if (identity && data.computer_id === request.ref && (identity.active_task_ref || identity.active_task)) {
+          var staleSessions = Object.assign({}, sessions)
+          staleSessions[request.ref] = Object.assign({}, identity, { active_task_ref: "", active_task: null })
+          publishSessions(staleSessions)
+        }
+      }
+      else if (kind.indexOf("follow-task:") === 0) {
+        var expectedFollow = request.followSnapshot
+        var follow = followedTasks[request.ref], current = sessions[request.ref], task = data.result || ({})
+        if (!sameFollowIdentity(follow, expectedFollow)) return
+        if (!current || expectedFollow.computerId !== request.ref || data.computer_id !== expectedFollow.computerId ||
+            data.endpoint_id !== expectedFollow.endpointId || data.binding_revision !== expectedFollow.bindingRevision ||
+            data.controller_epoch !== expectedFollow.epoch || current.endpoint_id !== expectedFollow.endpointId ||
+            current.binding_revision !== expectedFollow.bindingRevision ||
+            current.authorization_generation !== expectedFollow.authorizationGeneration || current.controller_epoch !== expectedFollow.epoch ||
+            task.endpoint_id !== expectedFollow.endpointId || task.controller_epoch !== expectedFollow.epoch ||
+            task.authorization_generation !== expectedFollow.authorizationGeneration || task.task_ref !== expectedFollow.taskRef) {
+          unfollowTask(request.ref)
+          return
+        }
+        if (task.terminal === true && ["completed", "partial", "cancelled", "blocked", "unverified"].indexOf(task.state) !== -1) {
+          var verifiedComplete = task.verified_complete === true
+          var completionNotice = task.state === "completed" && verifiedComplete
+          var willSendNotice = completionNotice && consoleBool("notifications", true)
+          console.info(root.notificationTracePrefix("follow-terminal") +
+            " computer=" + root.notificationTraceToken(request.ref) +
+            " task_ref=" + root.notificationTraceToken(follow.taskRef) +
+            " state=" + task.state + " verified=" + (verifiedComplete ? "true" : "false") +
+            " notice=" + (willSendNotice ? "verified-completion" : "none"))
+          unfollowTask(request.ref)
+          if (completionNotice)
+            queueNotice({ title: String(current.label || "ibara"),
+              body: followedTaskName(current, follow.taskRef) + " finished on " + String(current.label || request.ref) + ", and ibara checked it.",
+              computerId: request.ref, endpointId: follow.endpointId, bindingRevision: follow.bindingRevision,
+              authorizationGeneration: follow.authorizationGeneration, epoch: follow.epoch,
+              trace: { computerId: request.ref, taskRef: follow.taskRef, state: task.state,
+                verified: verifiedComplete, notice: "verified-completion" } })
+        } else if (task.needs_attention === true && ["waiting_for_human", "interrupted"].indexOf(task.state) !== -1 && follow.lastAttention !== task.state) {
+          var nextFollows = Object.assign({}, followedTasks)
+          nextFollows[request.ref] = Object.assign({}, follow, { lastAttention: task.state })
+          followedTasks = nextFollows
+          queueNotice({ title: String(current.label || "ibara"),
+            body: followedTaskName(current, follow.taskRef) + (task.state === "waiting_for_human" ? " is waiting for you" : " was interrupted") + " on " + String(current.label || request.ref) + ". Open its Activity tab in the ibara console.",
+            computerId: request.ref, endpointId: follow.endpointId, bindingRevision: follow.bindingRevision,
+            authorizationGeneration: follow.authorizationGeneration, epoch: follow.epoch })
+        }
+      }
+      else if (kind.indexOf("session-bootstrap:") === 0) {
+        var bootstrap = data.result || ({})
+        var candidate = sessions[request.ref]
+        if (candidate && data.computer_id === request.ref && data.endpoint_id === candidate.endpoint_id &&
+            data.binding_revision === candidate.binding_revision &&
+            bootstrap.endpoint_id === candidate.endpoint_id &&
+            bootstrap.authorization_generation === candidate.authorization_generation &&
+            bootstrap.controller_epoch === data.controller_epoch)
+          bindSessionEpoch(request.ref, candidate.endpoint_id, candidate.binding_revision,
+                           data.controller_epoch, candidate.authorization_generation)
+      }
+      else if (kind === "directory") {
+        var rows = StatusModel.listOf(data, "computers")
+        var updated = ({})
+        for (var c = 0; c < rows.length; c++) {
+          var row = rows[c]
+          if (!row || typeof row.computer_id !== "string" || !row.computer_id) continue
+          var previous = sessions[row.computer_id] || ({})
+          updated[row.computer_id] = Object.assign({}, previous, {
+            computer_id: row.computer_id, endpoint_id: row.endpoint_id,
+            binding_revision: row.binding_revision,
+            authorization_generation: row.authorization_generation,
+            controller_epoch: previous.controller_epoch || "",
+            display_id: previous.display_id || "",
+            label: row.label, host: typeof row.host === "string" ? row.host : "", trust_state: row.trust_state,
+            operator_principal: /^[a-z][a-z0-9_-]{0,31}$/.test(String(row.user || "")) ? String(row.user) : "",
+            connection: row.trust_state === "verified" ? (previous.connection || "loading") : "unverified",
+            owner: previous.owner || ({}), work: previous.work || [],
+            frame: previous.frame || null, frame_error: previous.frame ? String(previous.frame_error || "") : (previous.frame_error || "Preview unavailable"),
+            capture_age_ms: previous.capture_age_ms == null ? null : previous.capture_age_ms,
+            // How to wake it when it is off or asleep, as recorded when it last answered.
+            wake: row.wake !== undefined ? StatusModel.wakeView(row.wake) : previous.wake || null
+          })
+          if (previous.endpoint_id && (previous.endpoint_id !== row.endpoint_id || previous.binding_revision !== row.binding_revision || previous.authorization_generation !== row.authorization_generation)) {
+            updated[row.computer_id].frame = null
+            updated[row.computer_id].capture_age_ms = null
+            updated[row.computer_id].work = []
+            updated[row.computer_id].active_task = null
+            updated[row.computer_id].controller_epoch = ""
+            updated[row.computer_id].frame_error = "This computer's pairing changed. ibara is reconnecting."
+          }
+        }
+        publishSessions(updated, rows)
+        pruneComputerCaches()
+        directoryLoaded = true
+        failureCount = 0
+        connectionState = "ready"
+        ibaraMissing = ""
+        lastError = ""
+        // One publication per refresh: two assignments rebuild the wall twice and lose its keyboard position.
+        if (selectedComputerId && !sessions[selectedComputerId]) selectedComputerId = ""
+        Qt.callLater(root.refreshComputerSessions)
+      }
+      else if (kind === "tasks") { tasks = StatusModel.listOf(result, "tasks"); tasksLoaded = true }
+      else if (kind === "artifacts") { artifacts = StatusModel.listOf(result, "items").filter(function(item) { return item && typeof item.artifact_ref === "string" }); artifactsLoaded = true }
+      else if (kind === "procedures") {
+        procedures = StatusModel.listOf(result, "items").filter(function(item) { return item && typeof item.procedure_ref === "string" })
+        proceduresLoaded = true
+      }
+      else if (kind === "health") { health = result; applyHealth(request.scope.id, result) }
+      else if (kind === "logs") logLines = (Array.isArray(result.lines) ? result.lines : []).slice(-200).map(function(line) { return String(line).slice(0, 400) })
+      else if (kind === "access") accessTable = result
+      else if (kind === "computer-settings") computerSettings = StatusModel.settingsSections(result)
+      // First-run lists are polled; each is published only when it changes, so the rows on
+      // screen (and the keyboard focus on them) stay put between polls.
+      else if (kind === "tailnet") { var tailnetNow = StatusModel.tailnetView(data); if (!sameValue(tailnet, tailnetNow)) tailnet = tailnetNow }
+      else if (kind === "invites") {
+        var invitesNow = StatusModel.invitesView(data)
+        if (!sameValue(invites, invitesNow.invites)) invites = invitesNow.invites
+        if (!sameValue(shareTailscale, invitesNow.tailscale)) shareTailscale = invitesNow.tailscale
+        invitesLoaded = true
+      }
+      else if (kind === "pair-requests") {
+        var requestsNow = StatusModel.pairRequestsView(data)
+        if (!sameValue(pairRequests, requestsNow)) pairRequests = requestsNow
+        notifyPairRequests()
+      }
+      else if (kind === "connect-prompt") {
+        var promptNow = StatusModel.connectPromptView(data)
+        // Read before as not yet: an agent has just begun its first task here.
+        var firstNow = connectPrompt !== "" && !firstTaskDone && promptNow.first_task_done
+        connectPrompt = promptNow.prompt
+        firstTaskDone = promptNow.first_task_done
+        if (firstNow) announceFirstAgent()
+      }
+      else if (kind === "task" && request.ref === selectedTaskRef) {
+        var detail = result
+        var actualRef = detail.task && detail.task.task_ref || detail.task_ref || request.ref
+        if (String(actualRef) !== request.ref) throw new Error("Task detail did not match the selected task.")
+        selectedTaskDetail = detail
+        selectedTask = detail.task || detail
+        selectedTaskDetailRef = request.ref
+        selectedTaskDetailObservedAt = String(parsed.observed_at || "")
+        selectedTaskLoading = false
+      }
+      else if (kind === "procedure" && request.ref === selectedProcedureRef) {
+        var procedure = result.procedure || result
+        if (procedure.procedure_ref && String(procedure.procedure_ref) !== request.ref) throw new Error("Procedure detail did not match the selected procedure.")
+        selectedProcedure = procedure.procedure_ref ? procedure : null
+        selectedProcedureLoading = false
+      }
+      if (request.scoped) rememberScoped(kind)
+    } catch (error) {
+      var failure = Object.assign({}, readErrors)
+      failure[kind] = StatusModel.clip(error, 200)
+      readErrors = failure
+      if (request.scoped && request.scope.id === scopedComputerId && cachedReadKinds.indexOf(kind) !== -1) forgetScopedKind(request.scope.id, kind)
+      if (String(kind).indexOf("operator-files-") === 0) {
+        delete failure[kind]
+        readErrors = failure
+        discardRemoteFileRead(kind, request.ref, "Failed. ibara couldn't read the file list. Choose Refresh to try again.")
+      }
+    } finally {
+      if (kind === "task" && request.ref === selectedTaskRef && !readPending("task")) selectedTaskLoading = false
+      if (kind === "procedure" && request.ref === selectedProcedureRef && !readPending("procedure")) selectedProcedureLoading = false
+      Qt.callLater(root.drainReads)
+    }
+  }
+
+  function consumeAction(text) {
+    mutating = false
+    var kind = pendingMutation
+    pendingMutation = ""
+    var control = pendingControl
+    if (kind === "operator-take-control" || kind === "operator-handback") pendingControl = null
+    var scope = actionScope
+    actionScope = null
+    try {
+      var parsed = StatusModel.parseEnvelope(text)
+      if (parsed.request_id && parsed.request_id !== actionRequestId) {
+        if (String(kind).indexOf("human-file-") === 0) settleHumanFile(kind, null, "unmatched")
+        return
+      }
+      if (actionAccessGeneration !== accessGeneration) {
+        if (String(kind).indexOf("human-file-") === 0) settleHumanFile(kind, null, "stale-access")
+        return
+      }
+      // An action for one computer reports only on that computer.
+      if (scope) {
+        if (parsed.error) {
+          reportError(plainError(parsed.error.message || parsed.error.code || "Action failed", scope.id, false) +
+            (parsed.error.retry_safe === false ? " It may have partly happened; check this tab before trying again." : ""), scope.id, parsed.error)
+          if (targetEpochChanged(parsed.error)) forgetControllerEpoch(scope.id)
+          if (String(kind).indexOf("access-") === 0) accessChangeSettled(scope.id, false)
+          return
+        }
+        var answer = parsed.data || ({}), done = answer.result && typeof answer.result === "object" ? answer.result : ({})
+        if (answer.computer_id !== scope.id) {
+          actionError = "The answer came from a different computer than the one open, so ibara can't confirm this worked. Check this tab before trying again."
+          if (String(kind).indexOf("access-") === 0) accessChangeSettled(scope.id, false)
+          return
+        }
+        actionError = ""
+        actionNotice = kind === "fetch" ? (typeof done.local_path === "string" ? "Saved to " + done.local_path + "." : "Saved in " + downloadFolder + ".") : ""
+        if (kind.indexOf("access-") === 0) {
+          if (scope.generation === scopeGeneration) loadAccess()
+          accessChangeSettled(scope.id, true)
+        }
+        if (scope.id === scopedComputerId && (kind === "extend" || kind === "revoke")) { loadTasks(); if (selectedTaskRef) inspectTask(selectedTaskRef) }
+        if (scope.id === scopedComputerId && kind.indexOf("-procedure") !== -1) loadProcedures()
+        // Ownership may have changed (a task ended): re-read this computer's own status.
+        recheckComputer(scope.id)
+        return
+      }
+      if (parsed.error) {
+        if (String(kind).indexOf("human-file-") === 0) settleHumanFile(kind, parsed, "error")
+        reportError(plainError(parsed.error.message || parsed.error.code || "Action failed", control ? control.computer_id : "", false) +
+          (parsed.error.retry_safe === false ? " It may have partly happened; check the page you started it from before trying again." : ""), control ? control.computer_id : "", parsed.error)
+        return
+      }
+      if ((kind === "operator-take-control" || kind === "operator-handback") && control) {
+        var proof = parsed.data || ({}), reply = proof.result || ({}), current = sessions[control.computer_id]
+        if (!current || proof.computer_id !== control.computer_id || proof.endpoint_id !== control.endpoint_id ||
+            proof.binding_revision !== control.binding_revision || proof.controller_epoch !== control.controller_epoch ||
+            reply.endpoint_id !== control.endpoint_id || reply.controller_epoch !== control.controller_epoch ||
+            reply.authorization_generation !== control.authorization_generation || (!reply.ownership_revision && reply.state !== "pending_approval")) {
+          actionError = "ibara couldn't confirm who has control of " + computerLabelFor(control.computer_id) + ". Its header shows Hand Back once you have control; ibara is checking again."
+          return
+        }
+        if (reply.state === "pending_approval") {
+          actionNotice = "Waiting for approval. After approval, choose Take Control again."
+          loadAttention()
+          return
+        }
+        var refreshed = Object.assign({}, sessions)
+        refreshed[control.computer_id] = Object.assign({}, current, {
+          owner_name: reply.owner, ownership_revision: reply.ownership_revision,
+          holds_control: kind === "operator-take-control" && reply.viewer_ready === true,
+          holds_control_epoch: control.controller_epoch
+        })
+        publishSessions(refreshed)
+        actionNotice = kind === "operator-take-control" ?
+          "You have control. The viewer is opening; Super+Alt+Escape switches your keys between the two computers. Closing the viewer doesn't hand back, so choose Hand Back when you're done." :
+          "You handed back control. Its agent stays paused."
+        return
+      }
+      actionError = ""
+      actionNotice = ""
+      if (kind === "open-viewer") actionNotice = "Viewer opened. Closing it does not hand back."
+      if (kind === "open-terminal") actionNotice = "A terminal opened, signed in to that computer."
+      if (kind === "rename-computer" && parsed.data && parsed.data.computer) {
+        actionNotice = "Renamed to " + String(parsed.data.computer.label || "") + "."
+        loadComputers()
+      }
+      if (String(kind).indexOf("human-file-") === 0) settleHumanFile(kind, parsed, "ok")
+      refresh()
+    } catch (error) {
+      actionError = StatusModel.clip(error, 200)
+      if (String(kind).indexOf("human-file-") === 0) settleHumanFile(kind, null, "unreadable")
+    }
+  }
+
+
+  function schedulePoll(delay) {
+    pollTimer.interval = Math.max(1000, delay)
+    pollTimer.restart()
+  }
+
+
+  Component.onCompleted: {
+    root.notificationTraceRootOrdinal = ServiceBridge.allocateRootOrdinal()
+    console.info(root.notificationTracePrefix("root-start"))
+    ServiceBridge.publish(root)
+    connectDaemon()
+    refresh()
+    loadConsoleSettings()
+    loadAttention()
+  }
+  Component.onDestruction: ServiceBridge.clear(root)
+
+  Timer {
+    id: clock
+    interval: 1000
+    repeat: true
+    running: true
+    onTriggered: { root.nowMs = Date.now(); root.expireStalePreviews(); root.expireDrops(); root.refreshProblems() }
+  }
+  Timer {
+    interval: 5000; repeat: true; running: true
+    onTriggered: {
+      root.pollFollowedTasks()
+      // Also re-check any computer this operator holds, so replacement or a restart shows promptly.
+      var ids = [root.selectedComputerId]
+      for (var id in root.sessions) if (root.holdsControlOn(id) && ids.indexOf(id) === -1) ids.push(id)
+      for (var i = 0; i < ids.length; i++) if (ids[i]) root.pollStatus(ids[i])
+    }
+  }
+
+  Timer {
+    id: pollTimer
+    interval: 15000
+    repeat: false
+    onTriggered: root.refresh()
+  }
+
+  // Offer every visible computer each tick, starting from a rotating cursor so no card is always
+  // first; queuePreview admits only those due (the Fleet pictures setting) and not busy.
+  Timer {
+    interval: 150
+    repeat: true
+    running: root.consoleOpen && root.visibleComputerIds.length > 0
+    onTriggered: {
+      var visible = root.visibleComputerIds
+      if (!visible.length) return
+      root.tileCursor = (root.tileCursor + 1) % visible.length
+      for (var i = 0; i < visible.length; i++) root.queuePreview(visible[(root.tileCursor + i) % visible.length], root.wallQuality)
+    }
+  }
+
+  // A short tick keeps Watch at one frame per second without waiting a whole
+  // extra period after a slow reply; queuePreview enforces the 1 s spacing.
+  Timer {
+    interval: 200
+    repeat: true
+    running: root.consoleOpen && root.watchVisible && root.selectedComputerId !== ""
+    onTriggered: root.queuePreview(root.selectedComputerId, "selected")
+  }
+
+  Component {
+    id: daemonSocketComponent
+    Socket {
+      id: socket
+      path: root.daemonSocketPath
+      parser: SplitParser { onRead: data => root.consumeDaemonLine(data) }
+      onConnectionStateChanged: root.daemonConnectionChanged(socket)
+      onError: root.daemonConnectFailed(socket)
+    }
+  }
+  // Reconnects with backoff (0.5 s doubling to 30 s); any request also reconnects at once.
+  Timer { id: daemonReconnect; repeat: false; onTriggered: root.connectDaemon() }
+
+  Process { id: openFolderProcess }
+  // Whether the ibara package is installed and set up (see ibaraMissing); installed and set up
+  // while nothing answers on its socket means its service stopped (serviceStopped).
+  Process {
+    id: installCheck
+    command: ["sh", "-c", "if [ ! -x /usr/lib/ibara/bin/ibara ]; then echo package; elif [ ! -f /etc/ibara/station.json ]; then echo setup; else echo ready; fi"]
+    stdout: SplitParser {
+      onRead: data => {
+        var state = String(data || "").trim()
+        root.ibaraMissing = state === "package" || state === "setup" ? state : ""
+        if (root.ibaraMissing) root.lastError = ""
+        root.serviceStopped = state === "ready" && root.daemonDown
+      }
+    }
+  }
+  Process { id: installLauncher }
+  // Whether this desktop's service manager knows ibara's service, so Start ibara can start it.
+  Process {
+    id: ibaraUnitCheck
+    command: ["systemctl", "--user", "cat", "ibara-operator.service"]
+    onExited: code => root.canStartIbara = code === 0
+  }
+  // Start ibara: the console connects by itself once the service answers (daemonConnectionChanged).
+  Process {
+    id: ibaraStarter
+    command: ["systemctl", "--user", "start", "ibara-operator.service"]
+    onExited: code => {
+      if (code !== 0) { root.startState = "failed"; return }
+      root.daemonRetryMs = 500
+      root.connectDaemon()
+    }
+  }
+  // Started, but still nothing answers after 15 s: the toast names the command instead.
+  Timer {
+    interval: 15000
+    running: root.startState === "starting"
+    onTriggered: if (root.startState === "starting") root.startState = "failed"
+  }
+  // The terminal opens and this returns at once; the switch follows the answers polled below.
+  Process {
+    id: unattendedLauncher
+    onExited: (code, status) => {
+      if (code !== 0) root.settleUnattendedBoot("No terminal opened. Open one and run: " + unattendedLauncher.command[1])
+    }
+  }
+  Timer {
+    interval: 3000; repeat: true; running: root.unattendedBootWanted !== null
+    onTriggered: {
+      if (Date.now() - root.unattendedBootAskedAt > 600000) root.settleUnattendedBoot("")
+      else root.loadUnattendedBoot()
+    }
+  }
+
+  Process { id: notifyProcess; onRunningChanged: if (!running) Qt.callLater(root.drainNotices) }
+  // One waiting notify-send per approval notification: it prints the notification's id, then the
+  // action chosen, and ends when the notification closes.
+  Component {
+    id: approvalNoticeComponent
+    Process {
+      id: notice
+      property string ref: ""
+      property string computerId: ""
+      property string label: ""
+      property string noticeId: ""
+      property bool answered: false
+      property bool started: false
+      stdout: SplitParser { onRead: data => root.approvalNoticeLine(notice, data) }
+      onRunningChanged: { if (running) started = true; else if (started) root.approvalNoticeClosed(notice) }
+    }
+  }
+  // A short command nobody waits for (closing a notification).
+  Component {
+    id: oneShotComponent
+    Process { id: oneShot; onRunningChanged: if (!running) oneShot.destroy() }
+  }
+
+  // `tailscale up` for Sign In to Tailscale when Tailscale has no sign-in page waiting yet: the
+  // page it prints opens in the browser, and the tailnet is read again once it finishes.
+  Process {
+    id: tailscaleUp
+    property bool opened: false
+    property string lastLine: ""
+    command: ["tailscale", "up"]
+    function seen(line) {
+      var text = String(line || "").trim()
+      if (text) lastLine = text
+      var page = /https:\/\/\S+/.exec(text)
+      if (page && !opened) { opened = true; Qt.openUrlExternally(page[0]) }
+    }
+    stdout: SplitParser { onRead: data => tailscaleUp.seen(data) }
+    stderr: SplitParser { onRead: data => tailscaleUp.seen(data) }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && !opened) root.actionError = "Tailscale didn't start: " + StatusModel.clip(tailscaleUp.lastLine || "it stopped without saying why.", 200)
+      root.loadTailnet()
+    }
+  }
+
+  IpcHandler {
+    target: "io.zet.ibara"
+    function refresh(): void { root.refresh() }
+    function previewStats(): string { return root.previewStats() }
+    function status(): string {
+      return JSON.stringify({
+        connection: root.connectionState,
+        error: root.lastError,
+        computers: root.computers.length,
+        needs_you: root.needsYouCount,
+        questions: root.questions.length,
+        problems: root.problems.map(function(p) { return p.heading })
+      })
+    }
+  }
+}

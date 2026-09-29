@@ -1,0 +1,37 @@
+# Changelog
+
+The plugin ships inside ibara's `ibara` package, and `ibara update` updates both together. ibara's own [changelog](https://github.com/MayberryDT/ibara/blob/main/CHANGELOG.md) lists what each release changed for the whole of ibara.
+
+## Unreleased
+
+- Live Video (Preview), off by default in Settings under Fleet: fleet cards in view and the Screen tab play their computer's screen as video over the last picture, on computers that can encode it in hardware. It is new and not yet stable, and uses more memory and bandwidth. Under the switch, each computer that can't stream says why. When video fails or stops, the pictures come back without a word and video is tried again a minute later. It needs `qt6-multimedia` and `qt6-multimedia-ffmpeg` here and `wf-recorder` on the computers you watch; without them the cards keep their pictures.
+- Fleet cards keep up with their agents: a computer where an agent works, a person has control, agents are paused or something needs you is read about every second while the console is open (and for 10 s after it settles), so its step line, clicks and Done show within a second or two; approvals and questions arrive within about 1.5 s while an agent works in view.
+- Answering a toast with the pointer returns the keyboard to the page instead of moving it into the next toast, and a message's clock stops only for keyboard focus you moved there, so "Approved on …" leaves on time.
+
+## 0.2.0
+
+The first public release, shipped with ibara 0.1.0.
+
+- The bar mark shows the fleet's most urgent state, or a count when approvals, agents' questions or computers need you. Each new approval raises a desktop notification with Approve and Deny.
+- Whenever the bar is red, the console says why in a toast on every page: an approval, an agent's question (answer it with one of the agent's choices, or Dismiss), a computer that needs you (with Fix It), or a computer that has been offline or needed attention for a minute or more (with what to do, and Wake when it can be woken). A restart or an update never turns the bar red, and a toast put away takes its red with it.
+- An approval reads as plain words: who asks, what it wants to do, where and why. Details (Tab, or I in the quick panel) shows who, what, where, the page, the window's title and the task as labeled lines, and Copy Request copies the exact request.
+- A computer where an approval or an agent's question waits for you needs attention, alike in the fleet header, the Needs Attention filter, the quick panel and the bar. Its card and page still offer Pause Agents, or Resume after a person's pause, while it waits. Approvals and questions always show in the toasts; notes collapse behind "+N more" first. The quick panel lists approvals and questions first, and an agent's answer choices read in Title Case.
+- When ibara stops on this computer, the console says so in one toast with Start ibara, greys the wall and leaves every computer at its last known state, and Add Computer waits for it rather than show old Tailscale answers. The bar reads each computer's state from the start, before the console has been opened.
+- A refused invite code, a folder that can't be read and why Take Control is unavailable are toasts. A search or filter with no match says so in the middle of the wall, with Show All Computers. While you were away stays until it is read or dismissed.
+- Approvals can be turned off for your own computers' agents; agents from someone else's computer keep asking. Settings has Ask before agents send, spend or delete for every computer; a computer's Settings tab can choose for itself; and each agent and computer in Access has its own switch. An approval of a send, spend or delete also offers Always Allow (Shift+A in the quick panel), and a message says what changed and opens Access to undo it. An agent told it need not ask sends one request, answered Allow or Not Now.
+- The quick panel counts computers by state and lists the ones that need attention or are in use.
+- The console opens on the fleet wall: a live card for every computer, with filters, search and sort.
+- One to four computers (a small fleet, a filter or a search) fill the wall with large cards, sharp at the Fleet pictures pace; a lone card keeps its screen's shape.
+- On a wide window, Add Computer, Share This Computer, Settings and a computer's Access, System and Settings tabs use two columns, and Add Computer says what happens next. The Screen tab shows the screen as large as the tab allows. No paragraph runs past about 90 characters.
+- A card says who is using its computer: "You have control", "A person has control" with "someone on <computer>" when a person at another computer holds it, or the agent working there.
+- Each computer's page has Screen, Activity, Files, Access, System and Settings tabs. The Screen tab shows the computer's live screen whenever it is open, so the page's header has no Watch button.
+- A computer's page keeps its computer list narrow: a small picture, the name and its state. The Screen tab gives the picture the rest of the width and the full height, with Now, Who can use it and Recent files in a compact rail beside it (under it on a narrower window). Each is one line until opened, one at a time, and shows at most eight lines with Show All for the rest; Now lists the task's latest steps, and Who can use it shows each permission as a short mark.
+- Add Computer lists the computers on your tailnet, with Add Your 2 Computers for your own (not the one you're on, which you add by itself).
+- Share This Computer makes single-use invite codes for a friend, at a level and for a time you choose.
+- Connect an Agent, in the fleet's toolbar, shows the one prompt that connects any agent, with Copy Prompt.
+- Nothing ever sits between the toolbar and the computers, or between a page's header and its content. Every message, approval, request and error is a toast in the bottom-right corner, over the page; approvals stay until answered, notes leave by themselves, and "+N more" opens the rest. F6 moves the keyboard to the toasts and back.
+- File sizes read in MB and GB counted from the bytes (1 MB is 1,000,000 bytes), as ibara's own messages say them.
+- Take Control opens the viewer, and Hand Back ends it.
+- While you were away shows what happened on each computer since you last looked.
+- Settings holds notifications, the download folder, the fleet's picture interval and starting without the disk password.
+- Every color comes from the Omarchy theme, and every shape is square. You having control shows a person and agents working show a robot, in colors clearly apart in every Omarchy theme but the all-gray White and Vantablack (in Permafrost, agents are now cyan), so color is never the only cue.

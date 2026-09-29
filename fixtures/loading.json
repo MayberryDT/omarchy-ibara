@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "request_id": "fixture",
+  "command": "status",
+  "target": "ibara",
+  "observed_at": "2026-09-15T18:00:00Z",
+  "connection": "loading",
+  "desktop": null,
+  "owner": {
+    "availability": "ready",
+    "human_control": false,
+    "paused": false,
+    "unsettled": false,
+    "lease": null
+  },
+  "capabilities": {},
+  "stale": false,
+  "data": {
+    "availability": "ready",
+    "control": {
+      "human_control": false,
+      "paused": false,
+      "unsettled": false
+    },
+    "lease": null
+  },
+  "error": null
+}

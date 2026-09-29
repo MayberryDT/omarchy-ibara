@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "request_id": "fixture",
+  "command": "status",
+  "target": "ibara",
+  "observed_at": "2026-09-15T18:00:00Z",
+  "connection": "ready",
+  "desktop": "busy",
+  "owner": {
+    "availability": "busy",
+    "human_control": false,
+    "paused": false,
+    "unsettled": false,
+    "lease": {
+      "principal": "hazel",
+      "task_ref": "task_hazel_1",
+      "state": "active"
+    }
+  },
+  "capabilities": {},
+  "stale": false,
+  "data": {
+    "availability": "busy",
+    "control": {
+      "human_control": false,
+      "paused": false,
+      "unsettled": false,
+      "epoch": "epoch_fix",
+      "session_hint": true
+    },
+    "lease": {
+      "principal": "hazel",
+      "task_ref": "task_hazel_1",
+      "state": "active"
+    },
+    "tasks": [
+      {
+        "task_ref": "task_hazel_1",
+        "principal": "hazel",
+        "state": "active",
+        "goal": "Prepare the deployment report",
+        "created_at": "2026-09-15T16:00:00Z",
+        "updated_at": "2026-09-15T17:00:00Z",
+        "live": true,
+        "budgets": {
+          "active_control_seconds": 1200
+        },
+        "unresolved_request_ids": [],
+        "completion_outcome": null,
+        "completion_summary": null,
+        "contract_version": "3.0"
+      },
+      {
+        "task_ref": "task_vesper_1",
+        "principal": "vesper",
+        "state": "completed",
+        "goal": "Collect the signed PDF",
+        "created_at": "2026-09-15T12:00:00Z",
+        "updated_at": "2026-09-15T13:00:00Z",
+        "live": false,
+        "budgets": {
+          "active_control_seconds": 0
+        },
+        "unresolved_request_ids": [
+          "req_unknown"
+        ],
+        "completion_outcome": "handoff",
+        "completion_summary": "Needs a human to finish verification.",
+        "contract_version": "3.0"
+      }
+    ],
+    "items": [
+      {
+        "kind": "artifact_summary",
+        "artifact_ref": "artifact_ok",
+        "task_ref": "task_hazel_1",
+        "principal": "hazel",
+        "name": "report.txt",
+        "size_bytes": 12,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-09-15T17:01:00Z",
+        "delivery": "available",
+        "bytes_available": true
+      },
+      {
+        "kind": "artifact_summary",
+        "artifact_ref": "artifact_old",
+        "task_ref": "task_vesper_1",
+        "principal": "vesper",
+        "name": "gone.bin",
+        "size_bytes": 4,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "created_at": "2026-09-01T00:00:00Z",
+        "delivery": "unavailable",
+        "bytes_available": false
+      }
+    ],
+    "procedures": [
+      {
+        "kind": "procedure",
+        "procedure_ref": "proc_fixture",
+        "version": "0.1-candidate",
+        "status": "candidate",
+        "source_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "definition": {
+          "title": "Inspect the locked session",
+          "inputs": [
+            "Current lock state"
+          ],
+          "applicability": [
+            "ibara graphical session"
+          ],
+          "steps": [
+            "Do not type the password.",
+            "Ask a person there to unlock it."
+          ],
+          "expected_outputs": [
+            "Unlocked session"
+          ],
+          "verification": [
+            "hyprctl reports an unlocked session"
+          ],
+          "stop_conditions": [
+            "Password prompt"
+          ],
+          "evidence_refs": [
+            "check-lock"
+          ]
+        }
+      }
+    ],
+    "cpu": {
+      "loadavg_1": 0.21,
+      "loadavg_5": 0.18,
+      "loadavg_15": 0.12
+    },
+    "memory": {
+      "mem_total_kb": 8000000,
+      "mem_available_kb": 4200000
+    },
+    "disk": {
+      "path": "/",
+      "total_bytes": 128000000000,
+      "available_bytes": 64000000000
+    }
+  },
+  "error": null,
+  "task_details": {
+    "task_hazel_1": {
+      "ok": true,
+      "task": {
+        "task_ref": "task_hazel_1",
+        "principal": "hazel",
+        "state": "active",
+        "goal": "Prepare the deployment report",
+        "created_at": "2026-09-15T16:00:00Z",
+        "updated_at": "2026-09-15T17:00:00Z",
+        "live": true,
+        "budgets": {
+          "active_control_seconds": 1200
+        },
+        "unresolved_request_ids": [],
+        "completion_outcome": null,
+        "completion_summary": null,
+        "contract_version": "3.0"
+      },
+      "completion_projection": {
+        "kind": "completion_projection",
+        "task_ref": "task_hazel_1",
+        "criteria": {
+          "required": 2,
+          "satisfied": 1
+        },
+        "delivery": {
+          "required": 1,
+          "verified": 0
+        },
+        "unresolved_request_refs": [
+          "req_unknown"
+        ],
+        "cleanup": "unsettled",
+        "verified_complete": false
+      },
+      "criteria": [
+        {
+          "id": "sources",
+          "description": "Confirm source list",
+          "required": true,
+          "state": "satisfied",
+          "evidence": [
+            {
+              "ref": "evidence_sources",
+              "summary": "Eight sources checked against the report",
+              "kind": "check",
+              "expired": false
+            }
+          ]
+        },
+        {
+          "id": "signoff",
+          "description": "Review final report",
+          "required": true,
+          "state": "unverified",
+          "evidence": []
+        }
+      ],
+      "receipts": [
+        {
+          "operation_ref": "op_search",
+          "request_id": "req_search",
+          "tool": "browser_act",
+          "summary": "Reviewed source material",
+          "execution": "completed",
+          "effect": "applied",
+          "verification": "verified",
+          "dependency_state": "settled"
+        },
+        {
+          "operation_ref": "op_export",
+          "request_id": "req_unknown",
+          "tool": "computer_act",
+          "summary": "Saved the report",
+          "execution": "unknown",
+          "effect": "unknown",
+          "verification": "unknown",
+          "dependency_state": "unresolved"
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "report",
+          "host_id": "this-computer",
+          "destination_path": "/home/riley/Reports/deployment-report.pdf",
+          "state": "pending",
+          "revision": 2
+        }
+      ],
+      "receipt_next_cursor": null
+    },
+    "task_vesper_1": {
+      "ok": true,
+      "task": {
+        "task_ref": "task_vesper_1",
+        "principal": "vesper",
+        "state": "completed",
+        "goal": "Collect the signed PDF",
+        "created_at": "2026-09-15T12:00:00Z",
+        "updated_at": "2026-09-15T13:00:00Z",
+        "live": false,
+        "budgets": {
+          "active_control_seconds": 0
+        },
+        "unresolved_request_ids": [
+          "req_unknown"
+        ],
+        "completion_outcome": "handoff",
+        "completion_summary": "Needs a human to finish verification.",
+        "contract_version": "3.0"
+      },
+      "completion_projection": {
+        "kind": "completion_projection",
+        "task_ref": "task_vesper_1",
+        "criteria": {
+          "required": 1,
+          "satisfied": 0
+        },
+        "delivery": {
+          "required": 1,
+          "verified": 0
+        },
+        "unresolved_request_refs": [],
+        "cleanup": "settled",
+        "verified_complete": false
+      },
+      "criteria": [
+        {
+          "id": "signature",
+          "description": "Confirm the signature",
+          "required": true,
+          "state": "unverified",
+          "evidence": []
+        }
+      ],
+      "receipts": [
+        {
+          "operation_ref": "op_collect",
+          "request_id": "req_collect",
+          "tool": "computer_files",
+          "summary": "Collected a copy of the PDF",
+          "execution": "completed",
+          "effect": "applied",
+          "verification": "unknown",
+          "dependency_state": "settled"
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "signed_pdf",
+          "host_id": "this-computer",
+          "destination_path": "/home/riley/Contracts/signed.pdf",
+          "state": "pending",
+          "revision": 1
+        }
+      ],
+      "receipt_next_cursor": null
+    }
+  }
+}

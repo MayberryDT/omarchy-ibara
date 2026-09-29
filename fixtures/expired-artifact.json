@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "request_id": "fixture",
+  "command": "status",
+  "target": "ibara",
+  "observed_at": "2026-09-15T18:00:00Z",
+  "connection": "ready",
+  "desktop": "ready",
+  "owner": {
+    "availability": "ready",
+    "human_control": false,
+    "paused": false,
+    "unsettled": false,
+    "lease": null
+  },
+  "capabilities": {},
+  "stale": false,
+  "data": {
+    "availability": "ready",
+    "items": [
+      {
+        "kind": "artifact_summary",
+        "artifact_ref": "artifact_old",
+        "task_ref": "task_vesper_1",
+        "principal": "vesper",
+        "name": "gone.bin",
+        "size_bytes": 4,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "created_at": "2026-09-01T00:00:00Z",
+        "delivery": "unavailable",
+        "bytes_available": false
+      }
+    ]
+  },
+  "error": null
+}
