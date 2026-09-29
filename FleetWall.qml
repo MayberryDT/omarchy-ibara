@@ -440,7 +440,11 @@ Item {
       // Large cards sit in the middle of the wall.
       width: root.large ? root.columns * (root.largeLayout.width + root.cardGap) : parent.width + root.cardGap
       x: root.large ? Math.floor((parent.width + root.cardGap - width) / 2) : 0
-      height: parent.height
+      // The grid reaches up into the gap under the toolbar, with the cards at rest where they
+      // were, so a card that rises under the pointer stays whole, just below the toolbar's rule.
+      y: -topMargin
+      topMargin: Style.space(8)
+      height: parent.height + topMargin
       clip: true
       activeFocusOnTab: true
       boundsBehavior: Flickable.StopAtBounds
@@ -553,17 +557,20 @@ Item {
               }
             }
             PictureMoments {
+              id: moments
               anchors.fill: parent
               service: root.service
               computerId: cell.computerId
               tokens: root.tokens
               preview: preview
               fleetState: cell.fleetState
+              inView: cell.y + cell.height > grid.contentY && cell.y < grid.contentY + grid.height
+              onArrived: arriveAnim.restart()
             }
             Copy {
               anchors.centerIn: parent
               width: parent.width - Style.space(24)
-              visible: !preview.hasFrame
+              visible: !preview.hasFrame && !moments.arriving
               horizontalAlignment: Text.AlignHCenter
               text: cell.computer && cell.computer.frame_error ? String(cell.computer.frame_error) : cell.fleetState === "offline" ? "No picture" : "Waiting for a picture"
               dimmed: true
@@ -808,6 +815,23 @@ Item {
               NumberAnimation { target: lit; property: "opacity"; from: 0; to: 1; duration: 250; easing.type: Easing.OutCubic }
               PauseAnimation { duration: 500 }
               NumberAnimation { target: lit; property: "opacity"; to: 0; duration: 900; easing.type: Easing.InOutQuad }
+            }
+          }
+          // New to the fleet: a ring in the accent color holds while its picture comes up, then fades.
+          Rectangle {
+            id: arriveRing
+            anchors.fill: parent
+            visible: opacity > 0
+            radius: 0
+            color: "transparent"
+            border.width: Style.space(3)
+            border.color: Color.accent
+            opacity: 0
+            SequentialAnimation {
+              id: arriveAnim
+              NumberAnimation { target: arriveRing; property: "opacity"; from: 0; to: 1; duration: 250; easing.type: Easing.OutCubic }
+              PauseAnimation { duration: 2200 }
+              NumberAnimation { target: arriveRing; property: "opacity"; to: 0; duration: 900; easing.type: Easing.InOutQuad }
             }
           }
         }

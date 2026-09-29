@@ -29,6 +29,24 @@ Item {
   readonly property bool tailscaleReady: tailscaleState === "running"
   readonly property string readError: service && service.readErrors["tailnet"] ? String(service.readErrors["tailnet"]) : ""
   readonly property var pairings: service ? service.pairings : ({})
+  // Computers whose code someone just accepted, by node: when (ms). Their panel shows the match
+  // for Tokens.matchMs; kept here, not in a row, because the list is rebuilt when they join.
+  property var matched: ({})
+  property var lastPairStates: ({})
+  onPairingsChanged: {
+    var states = ({}), next = null
+    for (var node in pairings) {
+      var p = pairings[node]
+      states[node] = p.state
+      if (p.state === "paired" && lastPairStates[node] === "waiting" && p.mode === "needs_approval" && p.code) {
+        next = next || Object.assign({}, matched)
+        next[node] = Date.now()
+      }
+    }
+    lastPairStates = states
+    if (next) { matched = next; matchClear.restart() }
+  }
+  Timer { id: matchClear; interval: root.tokens.matchMs; onTriggered: root.matched = ({}) }
   // This computer first, then computers ready to add (yours before other people's), those that
   // need ibara, and those that are off. A computer keeps its place while it is being added.
   readonly property var rows: {
@@ -372,6 +390,11 @@ Item {
                 var focused = root.host ? root.host.focusedItem : null
                 if (!focused || !focused.visible) root.moveFocus(index, 1) || root.moveFocus(index, -1) || root.focusDefault()
               })
+              // Its code matched: the panel shows it for a moment. The pop plays once, at the match,
+              // not again when the list is rebuilt around it.
+              readonly property bool matched: !!root.matched[computer.node]
+              onMatchedChanged: if (matched) matchAnim.restart()
+              Component.onCompleted: if (matched && Date.now() - root.matched[computer.node] < 150) matchAnim.restart()
               readonly property int minutesLeft: pairing ? Math.max(1, Math.ceil((pairing.startedAt + 5 * 60000 - (root.service ? root.service.nowMs : Date.now())) / 60000)) : 5
               readonly property string stateText: kind === "added" ? "Added"
                 : kind === "again" ? "It answers as a new computer, as after a reinstall"
@@ -492,35 +515,52 @@ Item {
                 height: detailColumn.visible ? detailColumn.implicitHeight + Style.space(14) : 0
                 Column {
                   id: detailColumn
-                  visible: ["code", "install"].indexOf(row.kind) !== -1 || (row.codeOpen && row.canUseCode)
+                  visible: ["code", "install"].indexOf(row.kind) !== -1 || row.matched || (row.codeOpen && row.canUseCode)
                   x: Style.space(29)
                   width: parent.width - x - Style.space(8)
                   spacing: Style.space(8)
 
                   Rectangle {
-                    visible: row.kind === "code"
+                    id: codePanel
+                    readonly property color tone: row.matched ? root.tokens.readyColor : root.tokens.pausedColor
+                    visible: row.kind === "code" || row.matched
                     width: parent.width
                     height: Math.max(bigCode.implicitHeight, codeWords.implicitHeight) + Style.space(24)
                     radius: 0
-                    color: Qt.alpha(root.tokens.pausedColor, 0.10)
-                    border.width: 1
-                    border.color: root.tokens.pausedColor
+                    color: Qt.alpha(tone, row.matched ? 0.16 : 0.10)
+                    border.width: row.matched ? Style.space(2) : 1
+                    border.color: tone
+                    Behavior on color { ColorAnimation { duration: 250 } }
                     Accessible.role: Accessible.StaticText
-                    Accessible.name: "Pairing code " + (row.pairing ? row.pairing.code : "")
+                    Accessible.name: row.matched ? "Matched. " + row.name + " accepted." : "Pairing code " + (row.pairing ? row.pairing.code : "")
                     Copy {
                       id: bigCode
                       x: Style.space(18)
                       anchors.verticalCenter: parent.verticalCenter
                       text: row.pairing ? row.pairing.code : ""
+                      color: row.matched ? codePanel.tone : Color.popups.text
                       font.family: "monospace"
                       font.bold: true
                       font.pixelSize: Style.font.heading * 2 + Style.space(6)
                       font.letterSpacing: Style.space(2)
                       Accessible.ignored: true
                     }
+                    Text {
+                      id: matchCheck
+                      visible: row.matched
+                      anchors.left: bigCode.right
+                      anchors.leftMargin: Style.space(12)
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "✓"
+                      color: codePanel.tone
+                      font.family: Style.font.family
+                      font.bold: true
+                      font.pixelSize: Style.font.heading * 2 + Style.space(6)
+                      Accessible.ignored: true
+                    }
                     Column {
                       id: codeWords
-                      anchors.left: bigCode.right
+                      anchors.left: row.matched ? matchCheck.right : bigCode.right
                       anchors.leftMargin: Style.space(22)
                       anchors.right: parent.right
                       anchors.rightMargin: Style.space(18)
@@ -528,21 +568,30 @@ Item {
                       spacing: Style.space(4)
                       Copy {
                         width: parent.width
-                        text: "Check that " + row.name + " shows " + (row.pairing ? row.pairing.code : "") + ", then accept there."
+                        text: row.matched ? "Matched. " + row.name + " accepted." : "Check that " + row.name + " shows " + (row.pairing ? row.pairing.code : "") + ", then accept there."
+                        color: row.matched ? codePanel.tone : Color.popups.text
                         font.bold: true
                       }
                       Copy {
                         width: parent.width
-                        text: "Waiting for someone there. The code works for " + (row.minutesLeft === 1 ? "1 more minute." : row.minutesLeft + " more minutes.")
+                        text: row.matched ? "It's on your fleet now." : "Waiting for someone there. The code works for " + (row.minutesLeft === 1 ? "1 more minute." : row.minutesLeft + " more minutes.")
                         dimmed: true
                         font.pixelSize: Style.font.bodySmall
                       }
                       Copy {
+                        visible: !row.matched
                         width: parent.width
                         text: "No screen on " + row.name + "? Run ibara join there."
                         dimmed: true
                         font.pixelSize: Style.font.bodySmall
                       }
+                    }
+                    // The match: the code pops, the check springs in after it.
+                    SequentialAnimation {
+                      id: matchAnim
+                      ScriptAction { script: matchCheck.scale = 0 }
+                      NumberAnimation { target: bigCode; property: "scale"; from: 1.25; to: 1; duration: 260; easing.type: Easing.OutCubic }
+                      NumberAnimation { target: matchCheck; property: "scale"; from: 0; to: 1; duration: 420; easing.type: Easing.OutBack; easing.overshoot: 2.2 }
                     }
                   }
 

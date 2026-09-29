@@ -1090,10 +1090,33 @@ Item {
     return false
   }
   signal pairingAdded(string node, string label)
-  // Requests from other computers to use this one, waiting for a person here.
+  // Computers that joined the fleet after the console's first read of it, by id: when (ms). The
+  // first picture of one in view plays its arrival once, within two minutes (takeArrival).
+  property var arrivals: ({})
+  function takeArrival(computerId) {
+    var at = arrivals[computerId]
+    if (!at) return false
+    var next = Object.assign({}, arrivals)
+    delete next[computerId]
+    arrivals = next
+    return Date.now() - at < 120000
+  }
+  // Requests from other computers to use this one, waiting for a person here. One just accepted
+  // stays for 2.5 s marked `accepted`, so its card can show the match, whatever a read says.
   property var pairRequests: []
   property var pairAnswers: ({})
   property var notifiedPairRequests: ({})
+  function keepAccepted(list) {
+    var held = pairRequests.filter(function(request) { return request.accepted })
+    if (!held.length) return list
+    var ids = held.map(function(request) { return request.request_id })
+    return list.filter(function(request) { return ids.indexOf(request.request_id) === -1 }).concat(held)
+  }
+  Timer {
+    id: acceptedLinger
+    interval: 2500
+    onTriggered: root.pairRequests = root.pairRequests.filter(function(request) { return !request.accepted })
+  }
   // The prompt that connects an agent (from ibara, `connect-prompt`), and whether any agent has
   // begun a task through this computer yet.
   property string connectPrompt: ""
@@ -2191,10 +2214,15 @@ Item {
       delete answers[route.requestId]
       pairAnswers = answers
       var name = StatusModel.computerName(route.from)
-      if (!error) pairRequests = pairRequests.filter(function(request) { return request.request_id !== route.requestId })
+      var accepted = !error && route.answer === "accept" && data.state !== "expired"
+      // Accepted: the request's card turns to its match for a moment and says so itself.
+      if (accepted) {
+        pairRequests = pairRequests.map(function(request) { return request.request_id === route.requestId ? Object.assign({}, request, { accepted: true }) : request })
+        acceptedLinger.restart()
+      } else if (!error) pairRequests = pairRequests.filter(function(request) { return request.request_id !== route.requestId })
       if (error) actionError = message || "ibara couldn't answer " + name + ". Try again."
       else if (data.state === "expired") actionError = "The request from " + name + " expired. Add this computer again from " + name + "."
-      else actionNotice = route.answer === "accept" ? name + " can use this computer now." : "Declined. " + name + " can't use this computer."
+      else if (!accepted) actionNotice = "Declined. " + name + " can't use this computer."
       loadPairRequests()
     }
     else if (route.op === "invite-create" || route.op === "invite-revoke") consumeInvite(route, data, error, message)
@@ -3245,7 +3273,7 @@ Item {
         return
       }
       if (parsed.error) {
-        if (kind === "pair-requests") pairRequests = []
+        if (kind === "pair-requests") pairRequests = keepAccepted([])
         // No directory answer is the one failure that affects the whole console: it shows until the next one works.
         if (kind === "directory") {
           failureCount += 1
@@ -3371,11 +3399,12 @@ Item {
       }
       else if (kind === "directory") {
         var rows = StatusModel.listOf(data, "computers")
-        var updated = ({})
+        var updated = ({}), joined = []
         for (var c = 0; c < rows.length; c++) {
           var row = rows[c]
           if (!row || typeof row.computer_id !== "string" || !row.computer_id) continue
           var previous = sessions[row.computer_id] || ({})
+          if (directoryLoaded && !sessions[row.computer_id]) joined.push(row.computer_id)
           updated[row.computer_id] = Object.assign({}, previous, {
             computer_id: row.computer_id, endpoint_id: row.endpoint_id,
             binding_revision: row.binding_revision,
@@ -3401,6 +3430,11 @@ Item {
           }
         }
         publishSessions(updated, rows)
+        if (joined.length) {
+          var arrived = Object.assign({}, arrivals)
+          for (var a = 0; a < joined.length; a++) arrived[joined[a]] = Date.now()
+          arrivals = arrived
+        }
         pruneComputerCaches()
         directoryLoaded = true
         failureCount = 0
@@ -3431,7 +3465,7 @@ Item {
         invitesLoaded = true
       }
       else if (kind === "pair-requests") {
-        var requestsNow = StatusModel.pairRequestsView(data)
+        var requestsNow = keepAccepted(StatusModel.pairRequestsView(data))
         if (!sameValue(pairRequests, requestsNow)) pairRequests = requestsNow
         notifyPairRequests()
       }

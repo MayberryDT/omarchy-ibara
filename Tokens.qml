@@ -24,6 +24,8 @@ QtObject {
   readonly property color pausedColor: palette ? palette.yellow : Color.accent
   readonly property color readyColor: palette ? palette.green : Color.accent
   readonly property string fontFamily: Style.font.family
+  // How long a matched pairing code shows on Add Computer before the console goes to the fleet.
+  readonly property int matchMs: 1600
   readonly property var stateOrder: ["attention", "offline", "human", "working", "paused", "ready", "connecting"]
 
   // Page layout for the form pages and a computer's tabs: from `wideAt` wide, two columns

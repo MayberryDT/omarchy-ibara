@@ -191,8 +191,9 @@ Panel {
   // Computers added since the last time nothing was being added (Add All adds several at once).
   property var addedLabels: []
   // A computer was added. When nothing else is still being added or went wrong on Add Computer,
-  // the console goes back to the fleet, where the new cards are, and offers Add Another.
-  function computerAdded(label) {
+  // the console goes back to the fleet, where the new cards are, and offers Add Another; after a
+  // code someone accepted, it waits until Add Computer has shown the match (Tokens.matchMs).
+  function computerAdded(node, label) {
     if (!opened || !service) return
     var pairings = service.pairings || ({})
     var idle = !service.pairingActive
@@ -202,12 +203,25 @@ Panel {
     var names = labels.length === 1 ? labels[0] : labels.slice(0, -1).join(", ") + " and " + labels[labels.length - 1]
     var onFleet = "Added " + names + (labels.length === 1 ? ". It's on your fleet now." : ". They're on your fleet now.")
     if (route === "add" && clean) {
-      showFleet()
-      offerAction("added", onFleet, "Add Another", function() { root.showAdd() })
+      leaveAdd.text = onFleet
+      leaveAdd.interval = pairings[node] && pairings[node].mode === "needs_approval" ? tokens.matchMs : 1
+      leaveAdd.restart()
     } else if (route === "add") {
       offerAction("added", "Added " + names + ".", "Show Fleet", function() { root.showFleet() })
     } else {
       showToast("added", onFleet, false)
+    }
+  }
+  Timer {
+    id: leaveAdd
+    property string text: ""
+    onTriggered: {
+      if (!root.opened || !root.service) return
+      if (root.route !== "add") { root.showToast("added", text, false); return }
+      // Another add began during the match: stay on Add Computer.
+      if (root.service.pairingActive) { root.offerAction("added", text, "Show Fleet", function() { root.showFleet() }); return }
+      root.showFleet()
+      root.offerAction("added", text, "Add Another", function() { root.showAdd() })
     }
   }
   function runToastAction(key) {
@@ -280,6 +294,7 @@ Panel {
   // open lands on the fleet. The reset is silent: no route change is shown while hidden.
   function resetOnClose() {
     confirmation = null
+    leaveAdd.stop()
     connectOpen = false
     connectAnchor = null
     pendingFocus = null
@@ -385,7 +400,7 @@ Panel {
     function onOpenFleetRequested() { root.serviceRouteRequested() }
     function onOpenAddRequested() { root.serviceRouteRequested() }
     function onOpenShareRequested() { root.serviceRouteRequested() }
-    function onPairingAdded(node, label) { root.computerAdded(label) }
+    function onPairingAdded(node, label) { root.computerAdded(node, label) }
     function onActionErrorChanged() { root.syncActionError() }
     function onDeniedChanged() { root.syncActionError() }
     function onActionNoticeChanged() { root.syncActionNotice() }

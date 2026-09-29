@@ -2,6 +2,13 @@
 
 The plugin ships inside ibara's `ibara` package, and `ibara update` updates both together. ibara's own [changelog](https://github.com/MayberryDT/ibara/blob/main/CHANGELOG.md) lists what each release changed for the whole of ibara.
 
+## Unreleased
+
+- Fleet card hover: a top-row card rising under the pointer stays whole instead of sliding under the toolbar.
+- A computer that joins the fleet while the console is open arrives once, the first time its card is in view: "On your fleet", then its picture comes up from dark, and an accent ring holds on the card and fades.
+- Pairing by code: when the other computer accepts, Add Computer shows the match (the code panel turns the ready color, the code pops, a check, "Matched. NAME accepted.") before it goes to the fleet. On the computer being asked, Accept shows the same match on the request card instead of a separate toast.
+- Hand Back: the person ring opens outward past the picture's edge and fades, instead of vanishing.
+
 ## 0.2.0
 
 The first public release, shipped with ibara 0.1.0.

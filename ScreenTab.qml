@@ -287,6 +287,7 @@ Item {
       }
     }
     PictureMoments {
+      id: moments
       anchors.fill: parent
       service: root.service
       computerId: root.computerId
@@ -297,7 +298,7 @@ Item {
     Copy {
       anchors.centerIn: parent
       width: parent.width - Style.space(40)
-      visible: !preview.hasFrame
+      visible: !preview.hasFrame && !moments.arriving
       horizontalAlignment: Text.AlignHCenter
       text: root.computer && root.computer.frame_error ? (root.choosingDisplay ? "Choose a display under Display, " + (root.railBeside ? "on the right." : "below.") : String(root.computer.frame_error)) : root.fleetState === "offline" ? "No picture. This computer is not answering." : "Waiting for a picture"
       dimmed: true
@@ -323,22 +324,39 @@ Item {
         }
       }
     }
-    // A person's ring: when someone takes control it closes in once around the picture in the
-    // person color, and it fades away when control is handed back.
-    Rectangle {
-      id: controlRing
-      readonly property bool person: root.fleetState === "human"
-      anchors.fill: parent
-      color: "transparent"
-      radius: 0
-      border.color: root.tokens.stateColor("human")
-      border.width: Style.space(4)
-      opacity: person ? 1 : 0
-      Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
-      NumberAnimation on border.width { id: ringIn; running: false; from: Style.space(40); to: Style.space(4); duration: 450; easing.type: Easing.OutCubic }
-      onPersonChanged: if (person) ringIn.restart()
-      Accessible.ignored: true
+  }
+  // A person's ring: when someone takes control it closes in once around the picture in the
+  // person color; when control is handed back it lets go, opening outward past the picture's
+  // edge as it thins and fades. Outside the picture's clip, so the opening shows.
+  Rectangle {
+    id: controlRing
+    readonly property bool person: root.fleetState === "human"
+    property real spread: 0
+    x: stage.x - spread
+    y: stage.y - spread
+    width: stage.width + spread * 2
+    height: stage.height + spread * 2
+    color: "transparent"
+    radius: 0
+    border.color: root.tokens.stateColor("human")
+    border.width: Style.space(4)
+    opacity: 0
+    function settle() { ringIn.stop(); ringOut.stop(); spread = 0; border.width = Style.space(4); opacity = person ? 1 : 0 }
+    Component.onCompleted: settle()
+    onPersonChanged: {
+      if (person) { ringOut.stop(); spread = 0; opacity = 1; ringIn.restart() }
+      else if (opacity > 0) { ringIn.stop(); ringOut.restart() }
     }
+    // Another computer in the same place: its ring as it stands, after any change this caused.
+    Connections { target: root; function onComputerIdChanged() { Qt.callLater(controlRing.settle) } }
+    NumberAnimation { id: ringIn; target: controlRing; property: "border.width"; from: Style.space(40); to: Style.space(4); duration: 450; easing.type: Easing.OutCubic }
+    ParallelAnimation {
+      id: ringOut
+      NumberAnimation { target: controlRing; property: "spread"; from: 0; to: Style.space(18); duration: 700; easing.type: Easing.OutCubic }
+      NumberAnimation { target: controlRing; property: "border.width"; to: Style.space(1); duration: 700; easing.type: Easing.OutCubic }
+      NumberAnimation { target: controlRing; property: "opacity"; to: 0; duration: 700; easing.type: Easing.InQuad }
+    }
+    Accessible.ignored: true
   }
 
   Column {

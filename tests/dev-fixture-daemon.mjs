@@ -437,6 +437,7 @@ const FIXES = {
   restart_ibara:{code:'work_unsettled', message:n => `ibara on ${n} stopped answering its own checks.`, done:'Restarted ibara.', broken:n => `ibara on ${n} still isn't answering. Restart ${n}.`},
 };
 const pauses = new Map();            // id → 'person' | null, once paused or resumed here
+const controls = new Set();          // fleet15 ids a person took control of here, until Hand Back
 const ownershipChanges = new Map();  // id → pause changes, for ownership_revision
 const fixed = new Set();             // ids whose needs_person Fix It cleared
 const lastRepair = new Map();        // id → {at, summary}
@@ -455,7 +456,7 @@ const poweredOff = id => (powerOff.get(id) || 0) > Date.now();
 // Nothing answers for it: the offline list, a power action, or fleet15's Onyx until woken.
 const down = id => listed('offline', id) || poweredOff(id) || (!!member(id)?.offline && !woken.has(id));
 const pauseOf = id => pauses.has(id) ? pauses.get(id) : listed('system_paused', id) ? 'system' : member(id)?.paused ? 'person' : null;
-const ownerOf = id => { const m = member(id); return pauseOf(id) ? 'human' : m?.you ? 'operator:riley' : m?.agent && !cancelledTasks.has(taskRefOf(id)) ? `agent:${m.agent}:${taskRefOf(id)}` : 'none'; };
+const ownerOf = id => { const m = member(id); return controls.has(id) ? 'operator:riley' : pauseOf(id) ? 'human' : m?.you ? 'operator:riley' : m?.agent && !cancelledTasks.has(taskRefOf(id)) ? `agent:${m.agent}:${taskRefOf(id)}` : 'none'; };
 const ownershipRevision = (id, owner) => `${currentEpoch(id)}:${ownershipChanges.get(id) || 0}:${owner}`;
 function needsPerson(id) {
   const fix = String(control().needs_person?.[id] || ''), f = FIXES[fix];
@@ -701,14 +702,15 @@ function answer(request) {
   if (listed('session_refused', id) && command === 'operator-session') return refused(requestId, command, 'PERMISSION_DENIED: Operator grant unavailable.');
   if (command === 'operator-session') return opReply(requestId, command, id, {});
   const pauseOp = command === 'operator-control' && ['pause','resume'].includes(option('--op'));
-  if ((EPOCH_COMMANDS.has(command) || pauseOp) && option('--epoch') !== epoch) return refused(requestId, command, 'PERMISSION_DENIED: Target binding changed.');
+  const controlOp = fleet && command === 'operator-control' && ['take_control','handback'].includes(option('--op'));
+  if ((EPOCH_COMMANDS.has(command) || pauseOp || controlOp) && option('--epoch') !== epoch) return refused(requestId, command, 'PERMISSION_DENIED: Target binding changed.');
   const name = labelOf(id);
   if (command === 'operator-status') {
     const denied = listed('deny', id), m = member(id), owner = ownerOf(id), pause = pauseOf(id);
     const activeTask = !denied && m?.task && !cancelledTasks.has(taskRefOf(id)) ? {task_ref:taskRefOf(id),title:m.task,principal:m.agent,state:m.state || 'active',started_at:ago(m.minutes),...liveStep(m)} : null;
     const displayCount = Number.isInteger(control().displays?.[id]) ? control().displays[id] : 1;
     const outputs = denied ? [] : Array.from({length:displayCount}, (_, n) => ({display_id:n ? `fictional-display-${n + 1}` : 'fictional-display',display_revision:'fictional-1',label:n ? `Fictional screen ${n + 1}` : 'Fictional screen'}));
-    return opReply(requestId, command, id, {observation:denied?'denied':'available_if_desktop_ready',active_task_ref:activeTask?activeTask.task_ref:null,active_task:activeTask,outputs,files:fleet?'available_if_root_approved':'denied',owner,ownership_revision:ownershipRevision(id, owner),interactive_control:fleet?'available_if_exclusive':'unsupported_without_verified_viewer_adapter',holds_control:!!m?.you,
+    return opReply(requestId, command, id, {observation:denied?'denied':'available_if_desktop_ready',active_task_ref:activeTask?activeTask.task_ref:null,active_task:activeTask,outputs,files:fleet?'available_if_root_approved':'denied',owner,ownership_revision:ownershipRevision(id, owner),interactive_control:fleet?'available_if_exclusive':'unsupported_without_verified_viewer_adapter',holds_control:!!m?.you || controls.has(id),
       paused:!!pause,pause_origin:pause,system_wait:pause === 'system' ? (listed('resume_off', id) ? 'resume_off' : 'starting') : null,
       repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),
       video:listed('video_incapable', id) ? {capable:false,reason:"This computer can't stream video efficiently."} : {capable:true,reason:null}});
@@ -720,6 +722,14 @@ function answer(request) {
     ownershipChanges.set(id, (ownershipChanges.get(id) || 0) + 1);
     const owner = ownerOf(id);
     return opReply(requestId, command, id, {paused:!!pauseOf(id), pause_origin:pauseOf(id), availability:'ready', owner, ownership_revision:ownershipRevision(id, owner)});
+  }
+  // Take Control and Hand Back on fleet15: no viewer opens; the owner changes as on a real computer.
+  if (controlOp) {
+    if (option('--op') === 'take_control') controls.add(id);
+    else controls.delete(id);
+    ownershipChanges.set(id, (ownershipChanges.get(id) || 0) + 1);
+    const owner = ownerOf(id);
+    return opReply(requestId, command, id, {owner, ownership_revision:ownershipRevision(id, owner), viewer_ready:true, pause_origin:pauseOf(id)});
   }
   const task = ref => tasksOf(id).find(item => item.task_ref === ref);
   if (command === 'operator-tasks') return opReply(requestId, command, id, {tasks:tasksOf(id)});

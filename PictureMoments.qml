@@ -3,8 +3,10 @@ import qs.Commons
 
 // What happens on a computer's picture, over it: a click by its agent ripples where it landed;
 // a finished task gets its Done moment; going offline fades the picture to gray, and coming
-// back brings it up from dark. Fill the picture's box with it, after the picture and before the
-// labels on it. The service says when an agent clicked or finished (agentClicked, taskDone).
+// back brings it up from dark. A computer new to the fleet arrives: "On your fleet" on dark, then
+// its picture comes up, the first time it is in view (Service.arrivals); `arrived` tells the card.
+// Fill the picture's box with it, after the picture and before the labels on it. The service
+// says when an agent clicked or finished (agentClicked, taskDone).
 Item {
   id: root
   property var service: null
@@ -30,6 +32,18 @@ Item {
     ripAnim.restart()
   }
   function done() { doneAnim.restart() }
+  signal arrived()
+  readonly property bool arriving: arriveAnim.running
+  // A new computer's first time in view: its arrival, once. A list that builds pictures beyond
+  // what it shows says whether this one is really in view (inView).
+  property bool inView: true
+  readonly property bool arrivalDue: visible && inView && !!service && !!service.arrivals && !!service.arrivals[computerId]
+  onArrivalDueChanged: Qt.callLater(arriveIfDue)
+  function arriveIfDue() {
+    if (!arrivalDue || !service.takeArrival(computerId)) return
+    arriveAnim.restart()
+    arrived()
+  }
 
   Connections {
     target: root.service
@@ -40,9 +54,9 @@ Item {
 
   // Coming back online: only after it was offline, not after connecting at the start.
   property bool wasOffline: false
-  Component.onCompleted: wasOffline = offline
+  Component.onCompleted: { wasOffline = offline; Qt.callLater(arriveIfDue) }
   // Another computer in the same place (the Screen tab's list) starts fresh.
-  onComputerIdChanged: { wasOffline = offline; onlineAnim.complete(); ripAnim.complete(); doneAnim.complete() }
+  onComputerIdChanged: { wasOffline = offline; onlineAnim.complete(); ripAnim.complete(); doneAnim.complete(); arriveAnim.complete() }
   onFleetStateChanged: {
     if (offline) wasOffline = true
     else if (wasOffline && fleetState !== "connecting") {
@@ -64,6 +78,37 @@ Item {
     id: onlineAnim
     NumberAnimation { target: dark; property: "opacity"; from: 1; to: 0; duration: 900; easing.type: Easing.InOutQuad }
     NumberAnimation { target: root.preview; property: "scale"; from: 1.06; to: 1; duration: 900; easing.type: Easing.OutCubic }
+  }
+  // Arriving: the words on dark, then the picture comes up from it, settling from larger.
+  Item {
+    id: welcome
+    anchors.fill: parent
+    visible: opacity > 0
+    opacity: 0
+    Rectangle { anchors.fill: parent; color: Color.popups.background }
+    Text {
+      id: welcomeWords
+      anchors.centerIn: parent
+      readonly property real unit: Math.min(1, root.height / Style.space(260))
+      text: "On your fleet"
+      color: Color.accent
+      font.family: Style.font.family
+      font.pixelSize: Math.max(Style.space(16), Style.space(30) * unit)
+      font.bold: true
+    }
+  }
+  SequentialAnimation {
+    id: arriveAnim
+    ScriptAction { script: { welcome.opacity = 1; welcomeWords.opacity = 0; if (root.preview) root.preview.scale = 1.12 } }
+    ParallelAnimation {
+      NumberAnimation { target: welcomeWords; property: "opacity"; from: 0; to: 1; duration: 300; easing.type: Easing.OutCubic }
+      NumberAnimation { target: welcomeWords; property: "scale"; from: 0.85; to: 1; duration: 450; easing.type: Easing.OutBack }
+    }
+    PauseAnimation { duration: 700 }
+    ParallelAnimation {
+      NumberAnimation { target: welcome; property: "opacity"; to: 0; duration: 1200; easing.type: Easing.InOutQuad }
+      NumberAnimation { target: root.preview; property: "scale"; to: 1; duration: 1400; easing.type: Easing.OutCubic }
+    }
   }
   // A click: a square ring in the working color spreads from the spot.
   Rectangle {
