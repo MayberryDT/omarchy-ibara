@@ -93,10 +93,11 @@ const INCOMING = [
   {request_id:'pair_in_loft', from_owner:'casey@example.com', from_computer:'loft', code:'615 204'},
 ];
 // The text core's `onboarding::CONNECT_PROMPT` gives (`connect-prompt`, `ibara prompt`).
-const CONNECT_PROMPT = 'Connect yourself to ibara, which is installed on this computer. Its MCP server is the command `ibara mcp` (stdio, no arguments). Add it to your own MCP settings as a user-level server named `ibara`, keeping all your other settings; if a server named `ibara` already exists, replace it with this one. Then load it (restart yourself if you must) and call its `computer_status` tool. Tell me which computers you can use.';
+const CONNECT_PROMPT = "Connect yourself to ibara, which is installed on this computer. Do these three things:\n\n1. Add its MCP server, the command `ibara mcp` (stdio, no arguments), to your own MCP settings as a user-level server named `ibara`, keeping all your other settings. If a server named `ibara` already exists, replace it.\n2. Link the folder /usr/share/ibara/skills/ibara into your user-level skills folder as `ibara`, so updates reach you. If your harness has no skills folder, skip this; step 3 names the file. If an `ibara` skill is already there and is not that link, leave it and tell me.\n3. Add this block to your user-level instructions file (AGENTS.md, CLAUDE.md or your harness's equivalent). If a block with the same markers is there, replace it:\n\n<!-- ibara:start -->\n## ibara\nThe MCP server `ibara` lets you use real computers your person owns: desktop apps, a signed-in browser, the screen and files. When a task needs real input, a real browser session, a visual check or work on another computer, call ibara's `computer_status` and follow the ibara skill (/usr/share/ibara/skills/ibara/SKILL.md). Keep code, git, tests and pages you can fetch where you are.\n<!-- ibara:end -->\n\nThen call ibara's `computer_status` tool. If its tools won't appear until you restart, say so and ask me to restart you and paste this prompt again; doing it twice is safe. Tell me which computers you can use and which of the three steps you did.";
 const started = Date.now();
 const pairs = new Map();      // request_id → {node, mode, code, started, canceled}
 const added = new Map();      // node → directory row
+const removedIds = new Set(); // computers taken out with Remove Computer
 const answered = new Map();   // incoming request_id → state
 let pairCounter = 0;
 // Share This Computer: invites made here. control.json `invites: true` starts with one a friend
@@ -155,7 +156,7 @@ function firstRun(requestId, command, args) {
     if (state !== 'running') return ok({tailscale:{state, login:null, self_node:state === 'not_installed' ? null : SELF.node, login_url:state === 'logged_out' ? 'https://login.tailscale.com/a/fictional0000' : null}, computers:[]});
     return ok({tailscale:{state, login:SELF.owner, self_node:SELF.node, login_url:null}, computers:TAILNET.map((c, i) => ({
       node:c.node, dns_name:`${c.node}.tail0000.ts.net`, ip:`100.64.0.${i + 1}`, online:c.online, owner:c.owner, same_owner:c.owner === SELF.owner,
-      is_self:!!c.self, ibara:c.ibara, ...(c.self && control().self_computer ? {paired:true, computer_id:String(control().self_computer), label:null}
+      is_self:!!c.self, ibara:c.ibara, changed:false, ...(c.self && control().self_computer ? {paired:true, computer_id:String(control().self_computer), label:null}
         : {paired:added.has(c.node), computer_id:added.get(c.node)?.computer_id ?? null, label:added.get(c.node)?.label ?? null})}))});
   }
   if (command === 'invites') return ok({invites:[...inviteList()].reverse(), tailscale:{address:'100.64.0.1', share_url:'https://login.tailscale.com/admin/machines/100.64.0.1'}});
@@ -412,7 +413,8 @@ function changeAccess(model, command, body) {
 //   needs_person: {computer_id: fix}: a repair the computer couldn't finish by itself, fix being
 //     reconnect_display, restart_viewer or restart_ibara; Fix It clears it.
 //   repair_fails: [ids] whose Fix It doesn't work.
-//   system_paused: [ids] the system paused (a person paused fleet15's Lumen).
+//   system_paused: [ids] the system paused (a person paused fleet15's Lumen); resume_off: [ids]
+//     of those whose Resume agents after a restart setting is off, so they wait for Resume.
 //   power_denied: [ids] that refuse restart, shut down, sleep, lock and update.
 //   disk_password: [ids] that ask for a disk password when they start.
 //   wake: {computer_id: {kind:'wifi'|'ethernet', from_off}}: computers that can be woken over the
@@ -509,7 +511,7 @@ const consoleSettings = () => [
     bool('approval_notifications', 'Approval requests', 'Ask on this desktop when an agent needs your approval, with Approve and Deny on the notification.')]},
   {id:'files', title:'Files', settings:[{key:'download_folder', title:'Download folder', help:'Where files from other computers are saved. Leave empty for your Downloads folder.', type:'text', default:'',
     check:value => value === '' || path.isAbsolute(value) ? null : 'Use a full folder path, like /home/sam/Downloads.'}]},
-  {id:'fleet', title:'Fleet', settings:[{key:'fleet_preview_seconds', title:'Fleet pictures', help:'Seconds between new pictures of each computer on the fleet page. Longer uses less network.', type:'number', min:2, max:60, default:5},
+  {id:'fleet', title:'Fleet', settings:[{key:'fleet_preview_seconds', title:'Fleet picture interval', help:'Seconds between new pictures of each computer on the fleet page. Longer uses less network.', type:'number', min:2, max:60, default:5},
     {key:'live_video', title:'Live Video (Preview)', help:'New and not yet stable. Uses more memory and bandwidth.', type:'bool', default:false}]},
 ];
 // get | set KEY VALUE | reset KEY | reset --section ID. Values arrive as text: 'true'/'false',
@@ -643,7 +645,14 @@ function answer(request) {
     if (command === 'operator-file-receive') return respond(requestId, command, null, {code:'DEVELOPMENT_ONLY',message:'Fictional computers hold no real files. Nothing was saved.',retry_safe:true}, 'failed');
     return respond(requestId, command, null);
   };
-  if (command === 'directory') return respond(requestId, command, {computers:rows.concat([...added.values()].map(row => ({...row, label:labelOf(row.computer_id), wake:wakeOf(row.computer_id)})))});
+  if (command === 'remove-computer') {
+    const row = rows.concat([...added.values()]).find(r => r.computer_id === id);
+    if (!row || removedIds.has(id)) return respond(requestId, command, null, {code:'REMOVE_REFUSED', message:'No computer has that ID.', retry_safe:false}, 'failed');
+    removedIds.add(id);
+    for (const [node, a] of added) if (a.computer_id === id) added.delete(node);
+    return respond(requestId, command, {removed:{computer_id:id, label:labelOf(id)}});
+  }
+  if (command === 'directory') return respond(requestId, command, {computers:rows.filter(r => !removedIds.has(r.computer_id)).concat([...added.values()].map(row => ({...row, label:labelOf(row.computer_id), wake:wakeOf(row.computer_id)})))});
   // The console keeps no station; its computers are its directory.
   if (command === 'status') return respond(requestId, command, {station_configured:false});
   if (command === 'settings') return settled(settingsReply(consoleSettings(), 'console', 'console', words, option('--section')));
@@ -700,7 +709,8 @@ function answer(request) {
     const displayCount = Number.isInteger(control().displays?.[id]) ? control().displays[id] : 1;
     const outputs = denied ? [] : Array.from({length:displayCount}, (_, n) => ({display_id:n ? `fictional-display-${n + 1}` : 'fictional-display',display_revision:'fictional-1',label:n ? `Fictional screen ${n + 1}` : 'Fictional screen'}));
     return opReply(requestId, command, id, {observation:denied?'denied':'available_if_desktop_ready',active_task_ref:activeTask?activeTask.task_ref:null,active_task:activeTask,outputs,files:fleet?'available_if_root_approved':'denied',owner,ownership_revision:ownershipRevision(id, owner),interactive_control:fleet?'available_if_exclusive':'unsupported_without_verified_viewer_adapter',holds_control:!!m?.you,
-      paused:!!pause,pause_origin:pause,repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),
+      paused:!!pause,pause_origin:pause,system_wait:pause === 'system' ? (listed('resume_off', id) ? 'resume_off' : 'starting') : null,
+      repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),
       video:listed('video_incapable', id) ? {capable:false,reason:"This computer can't stream video efficiently."} : {capable:true,reason:null}});
   }
   if (pauseOp) {

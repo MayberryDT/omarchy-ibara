@@ -4,8 +4,8 @@ import qs.Ui
 import "StatusModel.js" as StatusModel
 
 // Health, logs and upkeep for the open computer, with power kept apart. What can't be undone
-// from here (restart, shut down, sleep, lock, update) is confirmed by name, right beside the
-// button, and runs only if the same computer is still open.
+// from here (restart, shut down, sleep, lock, update, Remove Computer) is confirmed by name, right
+// beside the button, and runs only if the same computer is still open.
 Item {
   id: root
   property var host: null
@@ -229,6 +229,24 @@ Item {
             disabledReason: root.actionReason
             onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "sleep")
           }
+        }
+      }
+
+      Group {
+        title: "Remove from your fleet"
+        Copy {
+          width: parent.width
+          text: "Takes " + root.computerLabel + " off this computer's fleet, as when it was reinstalled and no longer answers as itself. Add Computer adds it again."
+          dimmed: true
+          font.pixelSize: Style.font.bodySmall
+        }
+        ActionButton {
+          id: removeButton
+          label: "Remove Computer"
+          role: "danger"
+          blocked: !root.service || root.service.mutating
+          disabledReason: blocked && root.service ? "Wait for the current action to finish." : ""
+          onClicked: if (!blocked && root.host) root.host.confirmRemove(root.computerId, removeButton)
         }
       }
     }

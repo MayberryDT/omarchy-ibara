@@ -43,16 +43,18 @@ Item {
   readonly property var selfAddable: rows.filter(function(c) { return c.is_self && root.rowState(c) === "addable" })[0] || null
 
   function nameOf(c) { return c.label || StatusModel.computerName(c.node) }
-  // What a row shows now: added, adding, code (waiting for someone there), problem, offline,
-  // install (ibara isn't there yet) or addable.
+  // What a row shows now: added, again (added, but it answers with a new identity, as after a
+  // reinstall), adding, code (waiting for someone there), problem, offline, install (ibara isn't
+  // there yet) or addable.
   function rowState(c) {
     var p = pairings[c.node]
-    if (c.paired || (p && p.state === "paired")) return "added"
+    if ((c.paired && !c.changed) || (p && p.state === "paired")) return "added"
     if (p && p.state === "waiting" && p.mode === "needs_approval" && p.code) return "code"
     if (p && ["starting", "waiting", "canceling"].indexOf(p.state) !== -1) return "adding"
     if (p && ["declined", "expired", "failed"].indexOf(p.state) !== -1) return "problem"
     if (!c.online || c.ibara === "offline") return "offline"
     if (c.ibara === "not_installed") return "install"
+    if (c.paired) return "again"
     return "addable"
   }
   function copy(text, notice) {
@@ -372,6 +374,7 @@ Item {
               })
               readonly property int minutesLeft: pairing ? Math.max(1, Math.ceil((pairing.startedAt + 5 * 60000 - (root.service ? root.service.nowMs : Date.now())) / 60000)) : 5
               readonly property string stateText: kind === "added" ? "Added"
+                : kind === "again" ? "It answers as a new computer, as after a reinstall"
                 : kind === "adding" ? (pairing && pairing.state === "canceling" ? "Canceling…" : pairing && pairing.invite ? "Adding it with your invite code…" : "Adding it to your fleet…")
                 : kind === "code" ? "Waiting for someone at " + name
                 : kind === "problem" ? (pairing.state === "declined" ? "Declined on " + name : pairing.state === "expired" ? "Nobody accepted in time" : "Couldn't add it")
@@ -399,7 +402,7 @@ Item {
                   plain: true
                   x: Style.space(10)
                   anchors.verticalCenter: parent.verticalCenter
-                  fleetState: row.kind === "added" || row.kind === "addable" ? "ready" : row.kind === "problem" ? "attention"
+                  fleetState: row.kind === "added" || row.kind === "addable" ? "ready" : row.kind === "problem" || row.kind === "again" ? "attention"
                     : row.kind === "code" ? "paused" : row.kind === "adding" ? "working" : "offline"
                 }
                 Copy {
@@ -461,16 +464,17 @@ Item {
                 }
                 ActionButton {
                   id: slot
-                  visible: ["addable", "adding", "code", "problem"].indexOf(row.kind) !== -1
+                  visible: ["addable", "again", "adding", "code", "problem"].indexOf(row.kind) !== -1
                   anchors.right: parent.right
                   anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                   size: "small"
                   label: row.kind === "adding" ? (row.pairing && row.pairing.state === "canceling" ? "Canceling…" : "Adding…")
-                    : row.kind === "code" ? "Cancel" : row.kind === "problem" ? "Try Again" : "Add"
+                    : row.kind === "code" ? "Cancel" : row.kind === "problem" ? "Try Again" : row.kind === "again" ? "Add Again" : "Add"
                   blocked: row.kind === "adding"
                   disabledReason: blocked ? "ibara is adding " + row.name + "." : ""
-                  Accessible.name: (row.kind === "code" ? "Cancel adding " : row.kind === "problem" ? "Try adding again: " : "Add ") + row.name + ", " + row.owner
+                  tooltipText: row.kind === "again" ? "Adds " + row.name + " again with the same checks as the first time, keeping its card" : ""
+                  Accessible.name: (row.kind === "code" ? "Cancel adding " : row.kind === "problem" ? "Try adding again: " : row.kind === "again" ? "Add again: " : "Add ") + row.name + ", " + row.owner
                   onClicked: {
                     if (blocked || !root.service) return
                     if (row.kind === "code") root.service.cancelPairing(row.computer.node)

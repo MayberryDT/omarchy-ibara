@@ -670,7 +670,7 @@ Item {
                     role: "secondary"
                     label: "⋯"
                     accessibleName: "More for " + root.tokens.label(cell.computer)
-                    tooltipText: "More: power, pause and settings"
+                    tooltipText: "More: power, pause, settings and Remove Computer"
                     items: root.cardMenu(cell.computer, cell.fleetState)
                     onTriggered: id => root.cardAction(cell.computerId, id, more.button)
                     onOpenedChanged: cell.menuOpen = opened
@@ -829,6 +829,7 @@ Item {
     items.push({ id: "sleep", label: "Sleep…", danger: true, blocked: offline, reason: reason })
     if (service && service.thisComputerId && String(c.computer_id) === service.thisComputerId) items.push({ id: "share", label: "Share This Computer" })
     items.push({ id: "settings", label: "Settings" })
+    items.push({ id: "remove", label: "Remove Computer…", danger: true })
     return items
   }
   function cardAction(id, action, anchor) {
@@ -838,6 +839,7 @@ Item {
     else if (action === "wake") service.wake(id)
     else if (action === "settings") host.showComputer(id, "settings")
     else if (action === "share") host.showShare()
+    else if (action === "remove") host.confirmRemove(id, anchor)
     else host.confirmPower(id, action, anchor)
   }
   function openCurrent() {

@@ -6,6 +6,7 @@ The plugin ships inside ibara's `ibara` package, and `ibara update` updates both
 
 The first public release, shipped with ibara 0.1.0.
 
+- Remove Computer, in a card's ⋯ menu and on a computer's System tab, takes a computer off your fleet after asking "Remove <name> from your fleet? You can add it again from Add Computer."; a message confirms it. Add Computer shows a computer that answers with a new identity, as after a reinstall, with Add Again, which pairs it again with the same checks as the first time and keeps its card.
 - Live Video (Preview), off by default in Settings under Fleet: fleet cards in view and the Screen tab play their computer's screen as video over the last picture, on computers that can encode it in hardware. It is new and not yet stable, and uses more memory and bandwidth. Under the switch, each computer that can't stream says why. When video fails or stops, the pictures come back without a word and video is tried again a minute later. It needs `qt6-multimedia` and `qt6-multimedia-ffmpeg` here and `wf-recorder` on the computers you watch; without them the cards keep their pictures.
 - Fleet cards keep up with their agents: a computer where an agent works, a person has control, agents are paused or something needs you is read about every second while the console is open (and for 10 s after it settles), so its step line, clicks and Done show within a second or two; approvals and questions arrive within about 1.5 s while an agent works in view.
 - Answering a toast with the pointer returns the keyboard to the page instead of moving it into the next toast, and a message's clock stops only for keyboard focus you moved there, so "Approved on …" leaves on time.
@@ -28,7 +29,8 @@ The first public release, shipped with ibara 0.1.0.
 - Connect an Agent, in the fleet's toolbar, shows the one prompt that connects any agent, with Copy Prompt.
 - Nothing ever sits between the toolbar and the computers, or between a page's header and its content. Every message, approval, request and error is a toast in the bottom-right corner, over the page; approvals stay until answered, notes leave by themselves, and "+N more" opens the rest. F6 moves the keyboard to the toasts and back.
 - File sizes read in MB and GB counted from the bytes (1 MB is 1,000,000 bytes), as ibara's own messages say them.
-- Take Control opens the viewer, and Hand Back ends it.
+- Take Control opens the viewer, and Hand Back ends it. Hand Back says what happens next: agents can work again, or they stay paused because a person paused them (Resume lets them work), or until ibara has settled the computer.
+- A computer ibara paused after a restart reads "Paused after a restart · resuming by itself", or, when its Resume agents after a restart setting is off, "Paused after a restart · Resume agents after a restart is off" with Resume.
 - While you were away shows what happened on each computer since you last looked.
 - Settings holds notifications, the download folder, the fleet's picture interval and starting without the disk password.
 - Every color comes from the Omarchy theme, and every shape is square. You having control shows a person and agents working show a robot, in colors clearly apart in every Omarchy theme but the all-gray White and Vantablack (in Permafrost, agents are cyan), so color is never the only cue.

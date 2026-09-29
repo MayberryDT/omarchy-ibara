@@ -82,6 +82,8 @@ Rectangle {
           color: root.prompt ? Color.popups.text : Qt.alpha(Color.popups.text, 0.64)
           font.family: Style.font.family
           font.pixelSize: Style.font.body
+          // The prompt is text to copy: show "<!--" and "-->" as typed, not as arrows.
+          font.features: { "calt": 0, "liga": 0 }
           Accessible.role: Accessible.StaticText
           Accessible.name: "Prompt: " + text
         }

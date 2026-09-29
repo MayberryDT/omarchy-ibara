@@ -1444,6 +1444,15 @@ Item {
     startHelper("rename-computer", ["rename-computer", "--computer", id, "--label", name])
     return true
   }
+  // Take a computer out of this machine's fleet: its directory row, its pinned host key and what
+  // ibara held for it here. The computer itself isn't asked; Add Computer adds it again, with the
+  // same checks as the first time (a reinstalled computer, say, that no longer answers as itself).
+  function removeComputer(computerId) {
+    var id = String(computerId || "")
+    if (!sessions[id] || mutating) return false
+    startHelper("remove-computer", ["remove-computer", "--computer", id])
+    return pendingMutation === "remove-computer"
+  }
 
   function loadComputers() { requestRead("directory", ["directory"]) }
   // Computers whose status stays fresh. The console's wall and list publish what is on screen
@@ -1615,7 +1624,7 @@ Item {
   Timer { id: statusTick; interval: root.statusFastMs; repeat: true; running: root.panelOpen && !root.denied; onTriggered: root.pollVisibleStatus() }
   readonly property string previewLimitNotice: "Not previewed: at most 20 computers preview at once. Scroll or filter to see this one."
   // `large`: the wall shows these as at most four large cards, which preview at selected quality
-  // at the Fleet pictures pace (as tiles do), so their pictures stay sharp.
+  // at the Fleet picture interval (as tiles do), so their pictures stay sharp.
   function setVisibleComputerIds(ids, large) {
     var allowed = ({})
     for (var i = 0; i < computers.length; i++) allowed[computers[i].computer_id] = true
@@ -1731,7 +1740,7 @@ Item {
     var session = sessions[String(computerId || "")]
     var selected = quality === "selected"
     // Watch: the open computer's Screen tab, a picture a second. A large wall card's selected
-    // pictures come at the Fleet pictures pace.
+    // pictures come at the Fleet picture interval.
     var watching = selected && watchVisible && selectedComputerId === computerId
     var key = String(computerId) + ":" + quality
     var now = Date.now()
@@ -2651,7 +2660,7 @@ Item {
   signal settingsApplied(string computerId, var changes, string text)
   function consoleSetting(key, fallback) { return StatusModel.settingValue(consoleSettings, key, fallback) }
   function consoleBool(key, fallback) { var v = consoleSetting(key, fallback); return v === true || v === "true" }
-  // Seconds between pictures of each computer on the fleet page (the Fleet pictures setting).
+  // Seconds between pictures of each computer on the fleet page (the Fleet picture interval setting).
   readonly property int tilePreviewMs: Math.max(1, Math.min(60, Number(consoleSetting("fleet_preview_seconds", 5)) || 5)) * 1000
   function loadConsoleSettings() {
     if (busy["settings:get"]) return
@@ -2966,7 +2975,8 @@ Item {
     } else if (op === "operator-control") {
       if (error) { reportError(plain || "ibara couldn't " + route.pauseOp + " " + computerLabelFor(id) + ".", id, error); recheckComputer(id); return }
       var paused = result.paused === true
-      updateSession(id, { paused: paused, pause_origin: paused ? String(result.pause_origin || "person") : null,
+      // A person's pause or resume ends any wait of ibara's own (system_wait).
+      updateSession(id, { paused: paused, pause_origin: paused ? String(result.pause_origin || "person") : null, system_wait: null,
         owner_name: typeof result.owner === "string" ? result.owner : sessions[id] && sessions[id].owner_name,
         ownership_revision: result.ownership_revision || (sessions[id] && sessions[id].ownership_revision) })
       agentsPaused(id, paused)
@@ -3289,6 +3299,8 @@ Item {
             // Paused by a person waits for Resume; paused by ibara itself resumes on its own.
             paused: authenticated.paused === true,
             pause_origin: ["person", "system"].indexOf(authenticated.pause_origin) !== -1 ? authenticated.pause_origin : null,
+            // Why agents wait while only ibara paused it; "resume_off" waits for Resume.
+            system_wait: ["starting", "settling", "needs_person", "resume_off"].indexOf(authenticated.system_wait) !== -1 ? authenticated.system_wait : null,
             needs_person: StatusModel.needsPersonView(authenticated.repair && authenticated.repair.needs_person),
             wake: authenticated.wake !== undefined ? StatusModel.wakeView(authenticated.wake) : identity.wake || null,
             power_state: "",
@@ -3537,9 +3549,13 @@ Item {
           holds_control_epoch: control.controller_epoch
         })
         publishSessions(refreshed)
+        // Hand Back lets agents work again (owner "none") unless someone paused them: a person
+        // (before or while holding control), or ibara while it settles the computer.
         actionNotice = kind === "operator-take-control" ?
           "You have control. The viewer is opening; Super+Alt+Escape switches your keys between the two computers. Closing the viewer doesn't hand back, so choose Hand Back when you're done." :
-          "You handed back control. Its agent stays paused."
+          reply.owner === "none" ? "You handed back control. Its agents can work again." :
+          reply.pause_origin === "system" ? "You handed back control. Its agents stay paused until ibara has settled the computer." :
+          "You handed back control. Its agents stay paused because a person paused them; choose Resume to let them work again."
         return
       }
       actionError = ""
@@ -3549,6 +3565,11 @@ Item {
       if (kind === "rename-computer" && parsed.data && parsed.data.computer) {
         actionNotice = "Renamed to " + String(parsed.data.computer.label || "") + "."
         loadComputers()
+      }
+      if (kind === "remove-computer" && parsed.data && parsed.data.removed) {
+        actionNotice = "Removed " + String(parsed.data.removed.label || "the computer") + " from your fleet. You can add it again from Add Computer."
+        loadComputers()
+        loadTailnet()
       }
       if (String(kind).indexOf("human-file-") === 0) settleHumanFile(kind, parsed, "ok")
       refresh()
@@ -3602,7 +3623,7 @@ Item {
   }
 
   // Offer every visible computer each tick, starting from a rotating cursor so no card is always
-  // first; queuePreview admits only those due (the Fleet pictures setting) and not busy.
+  // first; queuePreview admits only those due (the Fleet picture interval setting) and not busy.
   Timer {
     interval: 150
     repeat: true

@@ -349,9 +349,10 @@ function pairRequestsView(data) {
 }
 
 // The prompt that connects an agent, and whether an agent has begun a task through this computer.
+// Its lines stay as ibara wrote them: the agent copies its block into its instructions file.
 function connectPromptView(data) {
   data = asObject(data)
-  return { prompt: clip(data.prompt, 2000), first_task_done: data.first_task_done === true }
+  return { prompt: String(data.prompt || "").replace(/\r/g, "").trim().slice(0, 4000), first_task_done: data.first_task_done === true }
 }
 
 function listOf(value, key) {
@@ -400,14 +401,15 @@ function computerState(session) {
   if (owner === "human" || session.paused === true) return "paused"
   return "ready"
 }
-// What you can do about this computer's agents: "resume" a pause a person made (ibara's own
-// pause after a restart ends by itself), "pause" while an agent works or the computer is free,
-// or "". From the computer's own state: an approval or a question waiting there (Needs
-// Attention) never hides Pause Agents or Resume.
+// What you can do about this computer's agents: "resume" a pause a person made, or ibara's own
+// pause after a restart when the computer's Resume agents after a restart setting is off
+// (system_wait "resume_off"; otherwise ibara's pause ends by itself), "pause" while an agent
+// works or the computer is free, or "". From the computer's own state: an approval or a
+// question waiting there (Needs Attention) never hides Pause Agents or Resume.
 function pauseAction(session) {
   session = asObject(session)
   var state = computerState(session)
-  if (state === "paused") return session.pause_origin === "system" ? "" : "resume"
+  if (state === "paused") return session.pause_origin === "system" && session.system_wait !== "resume_off" ? "" : "resume"
   return state === "working" || state === "ready" ? "pause" : ""
 }
 
@@ -493,8 +495,11 @@ function activityLine(session, nowMs) {
   var actor = fleetActor(session)
   if (state === "human") return actor === "you" ? "You have control" : "Controlled by " + actor
   if (state === "working") return "Agent working"
-  // A pause ibara made itself (after a restart) ends by itself; a person's pause waits for Resume.
-  if (state === "paused") return session.pause_origin === "system" ? "Paused after a restart · resuming by itself" : "Paused · agents stopped"
+  // A pause ibara made itself (after a restart) ends by itself unless the computer's Resume agents
+  // after a restart setting is off; a person's pause waits for Resume.
+  if (state === "paused" && session.pause_origin === "system")
+    return session.system_wait === "resume_off" ? "Paused after a restart · Resume agents after a restart is off" : "Paused after a restart · resuming by itself"
+  if (state === "paused") return "Paused · agents stopped"
   return "Ready"
 }
 

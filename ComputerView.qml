@@ -31,9 +31,10 @@ Item {
     { id: "screen", label: "Screen" }, { id: "activity", label: "Activity" }, { id: "files", label: "Files" },
     { id: "access", label: "Access" }, { id: "system", label: "System" }, { id: "settings", label: "Settings" }
   ]
-  // A pause a person made waits for Resume; ibara's own pause after a restart ends by itself.
+  // A pause a person made waits for Resume, and so does ibara's own pause after a restart when
+  // the computer's Resume agents after a restart setting is off; otherwise ibara's ends by itself.
   // Both follow the computer's own state, so an approval waiting there never hides them.
-  readonly property bool personPaused: StatusModel.pauseAction(computer) === "resume"
+  readonly property bool canResume: StatusModel.pauseAction(computer) === "resume"
   readonly property bool canPause: StatusModel.pauseAction(computer) === "pause"
   readonly property bool pauseBusy: !!service && !!service.busy["pause:" + computerId]
   readonly property var computers: service && Array.isArray(service.computers) ? service.computers.filter(function(c) { return !!(c && c.computer_id) }) : []
@@ -283,7 +284,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(8)
         ActionButton {
-          visible: root.personPaused
+          visible: root.canResume
           label: root.pauseBusy ? "Resuming…" : "Resume"
           blocked: root.pauseBusy
           tooltipText: "Let the agents on " + root.computerLabel + " work again"

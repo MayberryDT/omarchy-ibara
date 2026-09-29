@@ -542,6 +542,22 @@ Panel {
     })
   }
 
+  // Remove Computer takes a computer out of this fleet (after a reinstall, say); Add Computer adds
+  // it again with the same checks as the first time.
+  function confirmRemove(id, anchor) {
+    var c = computerById(id)
+    if (!c || !service) return
+    askConfirm({
+      anchor: anchor,
+      message: "Remove " + tokens.label(c) + " from your fleet? You can add it again from Add Computer.",
+      confirmLabel: "Remove Computer",
+      danger: true,
+      subject: id,
+      run: function() { root.service.removeComputer(id) },
+      valid: function() { return !!root.computerById(id) }
+    })
+  }
+
   // ---- keyboard: Escape backs out, F5 refreshes, / finds, Ctrl+, opens Settings, F6 moves between
   // the page and its toasts. Tab and arrows follow focus.
   function textFocused() {

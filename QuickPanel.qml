@@ -5,7 +5,7 @@ import qs.Ui
 // A small fleet summary whose main job is opening the console. What waits for your answer comes
 // first, right under its title: a request to use this computer, then approvals and agents'
 // questions, oldest first (the first two, then "+N more" that opens the console). Then the
-// counts and only the computers that need you or are in use; the console handles everything
+// counts and up to 5 computers, the ones that need you or are in use first; the console handles everything
 // else. While ibara isn't running on this computer, it says so instead, with Start ibara, and the
 // computers are greyed at their last known state.
 Panel {

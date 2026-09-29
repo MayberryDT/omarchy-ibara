@@ -273,7 +273,8 @@ test('what waits for your answer makes its computer need attention, never a prob
 // Failure cases for Pause Agents and Resume (header, card menu, card button):
 // 1. An approval or question waiting on a computer where an agent works hides Pause Agents.
 // 2. A computer a person paused loses Resume while an approval waits there.
-// 3. ibara's own pause after a restart offers Resume, or a paused computer offers Pause Agents.
+// 3. ibara's own pause after a restart offers Resume, or a paused computer offers Pause Agents;
+//    or, when the computer leaves resuming to a person (system_wait resume_off), lacks Resume.
 // 4. Pause shows where it can't work: offline, someone holding control, a real problem, connecting.
 test('pause and resume follow the computer, never what waits for your answer there', () => {
   const approval = { waiting: { approvals: 1, questions: 0 } };
@@ -284,7 +285,12 @@ test('pause and resume follow the computer, never what waits for your answer the
   assert.equal(act(live(approval)), 'pause');
   assert.equal(act(live({ owner_name: 'human', pause_origin: 'person', ...approval })), 'resume');
   assert.equal(act(live({ owner_name: 'human', waiting: { approvals: 0, questions: 2 } })), 'resume');
-  assert.equal(act(live({ owner_name: 'human', pause_origin: 'system', ...approval })), '');
+  const restarted = live({ owner_name: 'human', paused: true, pause_origin: 'system', ...approval });
+  assert.equal(act(restarted), '');
+  assert.equal(M.activityLine({ ...restarted, waiting: {} }), 'Paused after a restart · resuming by itself');
+  const resumeOff = { ...restarted, system_wait: 'resume_off' };
+  assert.equal(act(resumeOff), 'resume');
+  assert.equal(M.activityLine({ ...resumeOff, waiting: {} }), 'Paused after a restart · Resume agents after a restart is off');
   assert.equal(act(live({ connection: 'offline', owner_name: 'agent:relay:task_1', ...approval })), '');
   assert.equal(act(live({ owner_name: 'operator:riley', holds_control: true, ...approval })), '');
   assert.equal(act(live({ owner_name: 'agent:relay:task_1', needs_person: { message: 'Screen sharing needs a repair.' }, ...approval })), '');
