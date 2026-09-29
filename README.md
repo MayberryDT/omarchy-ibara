@@ -14,7 +14,7 @@ The console lives in Omarchy's bar: one glance tells you whether anything needs 
 The plugin has 3 parts.
 
 - The bar shows the ibara mark and one small square in the color of the fleet's most urgent state: red when a computer needs you, purple while you control one, blue while agents work (cyan, or another theme color, in a theme whose blue is hard to tell from its purple). When approvals, agents' questions or computers need you, it shows how many instead. Whenever it is red, the console says why.
-- The quick panel opens when you click the mark. It counts your computers by state, lists the ones that need attention or are in use, and has Open Console.
+- The quick panel opens when you click the mark while nothing needs you. It counts your computers by state, lists up to 5 of them, the ones that need attention or are in use first, and has Open Console. When something needs you, the click opens it in the console instead.
 - The console opens when you right-click the mark. It starts on the fleet wall, with every computer as a live card, attention first.
 
 <!-- Screenshot: the bar mark with a count, and the quick panel open under it. -->
@@ -62,7 +62,7 @@ If you installed the plugin from Omarchy's plugin marketplace first, its console
 - Omarchy 4 with its Quattro shell
 - ibara itself (the `ibara` package), which brings the service this plugin talks to, and Tailscale
 - a terminal Omarchy can open (`omarchy-launch-floating-terminal-with-presentation`, `omarchy-launch-terminal` or `xdg-terminal-exec`) for the installer and remote shells
-- for Live Video (Preview), which is off by default: `qt6-multimedia` and `qt6-multimedia-ffmpeg` here, and `wf-recorder` with hardware H.264 encoding on each computer you watch
+- for Live Video (Preview), which is off by default: hardware H.264 encoding on each computer you watch (the `ibara` package brings `wf-recorder`, `qt6-multimedia` and `qt6-multimedia-ffmpeg`)
 
 The plugin has no install hook and copies no credentials. It talks only to the local ibara service, over one private socket in your runtime folder.
 
@@ -113,12 +113,15 @@ tests/run
 
 It checks the manifest, the QML syntax, the model tests and, when Omarchy is installed, `omarchy plugin validate`. The model tests need Node, which is used only for tests, never at run time.
 
-To run the plugin from a checkout instead of the installed copy:
+To run the plugin from a checkout instead of the installed copy, point Omarchy's plugin folder at it and restart the shell:
 
 ```bash
-omarchy plugin add "$(pwd)" --enable --yes
+ln -sfn "$(pwd)" ~/.config/omarchy/plugins/io.zet.ibara
+omarchy restart shell
 omarchy-shell shell summon io.zet.ibara '{}'
 ```
+
+`ibara setup` links the installed copy back.
 
 ## License
 
