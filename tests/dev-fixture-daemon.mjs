@@ -53,7 +53,7 @@ const hostOf = id => member(id) ? member(id).name.toLowerCase() : 'fictional-onl
 const taskRefOf = id => `task_${hostOf(id)}_live`;
 // control.json simulates independent endpoint conditions: deny, offline, hang, revoked,
 // epoch (a controller restart), displays ({computer_id: count}, default 1),
-// scoped_delay_ms (every per-computer read of tasks, results, access, logs and health for one
+// scoped_delay_ms (every per-computer read of tasks, results, access, logs, health and windows for one
 // computer answers that much later, as a slow computer does) and one delayed "late" reply.
 // Runtime files live beside the socket, outside the plugin folder, because the shell
 // hot-reloads a plugin when its files change.
@@ -532,6 +532,43 @@ function receiptsOf(task) {
   return steps.map(([summary, tool, minutes], n) => ({operation_ref:`${task.task_ref}_op_${n}`, task_ref:task.task_ref, tool, summary, created_at:ago(minutes),
     execution:'completed', effect:'applied', verification:'verified', dependency_state:'settled', error:null}));
 }
+// Windows (operator-windows, -window-close, -window-move): Hyprland workspaces with the windows in
+// each, each saying whether it runs in a terminal (core tells from its process, not its class).
+// Where fleet15's agent works, its terminal is in use, and its browser answers Close or Move To…
+// with BUSY the first time (the agent took it after the list was read). The text editor asks to
+// save, so Close leaves it open. btop, a terminal started with its own app id as Omarchy starts
+// it, was left by an earlier agent. Dune shows an empty workspace 3 on screen. Changes last until
+// the daemon stops.
+const windowSets = new Map();        // computer id → its windows
+function windowsOf(id) {
+  if (windowSets.has(id)) return windowSets.get(id);
+  const m = member(id), host = m ? hostOf(id) : id, live = m?.task ? taskRefOf(id) : null;
+  const seed = parseInt(crypto.createHash('sha256').update(id).digest('hex').slice(0, 6), 16);
+  const rows = [
+    {class:'chromium', title:'Sign up · Example', workspace:1, task:live, claimed:false},
+    {class:'foot', title:'npm run build', workspace:1, task:live, terminal:true},
+    {class:'org.omarchy.btop', title:'btop', workspace:2, task:`task_${host}_earlier`, terminal:true},
+    {class:'org.gnome.TextEditor', title:'Untitled 1 — Text Editor', workspace:2, task:null, asks_to_save:true},
+    {class:'org.gnome.Nautilus', title:'Downloads', workspace:2, task:null},
+    {class:'Spotify', title:'Spotify Premium', workspace:-98, task:null},
+  ].map((w, n) => ({...w, address:'0x' + (0x55d0a0000000 + seed * 0x100 + n * 0x40).toString(16), pid:4100 + n * 7}));
+  windowSets.set(id, rows);
+  return rows;
+}
+const liveTaskOf = id => member(id)?.task && !cancelledTasks.has(taskRefOf(id)) ? {task_ref:taskRefOf(id), goal:member(id).task} : null;
+function windowTask(id, w) {
+  if (!w.task || (w.claimed === false)) return null;
+  const task = tasksOf(id).find(t => t.task_ref === w.task);
+  return task ? {task_ref:task.task_ref, goal:task.goal, running:liveTaskOf(id)?.task_ref === task.task_ref} : null;
+}
+function windowsView(id) {
+  const active = member(id)?.you ? 3 : 1, windows = windowsOf(id);
+  const ids = [...new Set(windows.map(w => w.workspace).concat([active]))].sort((a, b) => (a < 0) - (b < 0) || a - b);
+  return {workspaces:ids.map(ws => ({id:ws, name:ws < 0 ? 'special:scratchpad' : String(ws), special:ws < 0, active:ws === active,
+    windows:windows.filter(w => w.workspace === ws).map(w => ({address:w.address, pid:w.pid, class:w.class, title:w.title, terminal:w.terminal === true,
+      floating:ws < 0, fullscreen:false, focused:ws === active && w === windows.find(x => x.workspace === ws), task:windowTask(id, w)}))})),
+    agent:liveTaskOf(id)};
+}
 // Settings, shaped like ibarad's: sections of typed settings, each with its value and default.
 const bool = (key, title, help) => ({key, title, help, type:'bool', default:true});
 const computerSettings = id => [
@@ -646,9 +683,9 @@ function opReply(requestId, command, id, payload) {
 // Per-computer commands that check the epoch the console holds.
 const EPOCH_COMMANDS = new Set(['operator-status','operator-tasks','operator-task','operator-artifacts','operator-procedures','operator-procedure','operator-task-extend',
   'operator-task-revoke','operator-procedure-review','operator-artifact-save','operator-access','operator-access-set','operator-access-remove','operator-access-unpair',
-  'operator-logs','operator-health','operator-repair','operator-answer-attention','operator-power','operator-settings']);
+  'operator-logs','operator-health','operator-repair','operator-answer-attention','operator-power','operator-settings','operator-windows','operator-window-close','operator-window-move']);
 // The reads that replaced the administrator route; scoped_delay_ms slows them.
-const SCOPED_READS = new Set(['operator-tasks','operator-task','operator-artifacts','operator-procedures','operator-procedure','operator-access','operator-logs','operator-health']);
+const SCOPED_READS = new Set(['operator-tasks','operator-task','operator-artifacts','operator-procedures','operator-procedure','operator-access','operator-logs','operator-health','operator-windows']);
 const POWER_ACTIONS = ['restart','shutdown','sleep','lock','update_ibara','update_omarchy'];
 const FICTIONAL_IBARA = '0.1.0-40';
 
@@ -794,6 +831,21 @@ function answer(request) {
     if (command === 'operator-task-extend') return opReply(requestId, command, id, {task_ref:found.task_ref, state:'active'});
     cancelledTasks.add(found.task_ref);
     return opReply(requestId, command, id, {task_ref:found.task_ref, state:'cancelled'});
+  }
+  // fleet15's Nimbus runs an ibara from before window management, which doesn't know these.
+  if (['operator-windows','operator-window-close','operator-window-move'].includes(command)) {
+    if (member(id)?.older_ibara) return fail('INVALID_ARGUMENT', 'Unknown operator operation.', true);
+    if (command === 'operator-windows') return opReply(requestId, command, id, windowsView(id));
+    const address = option('--address'), pid = option('--pid'), workspace = option('--workspace');
+    if (!/^0x[0-9a-f]{1,16}$/.test(address || '') || !/^[1-9][0-9]*$/.test(pid || '')) return fail('INVALID_ARGUMENT', 'Name the window by its address and process ID.', true);
+    if (command === 'operator-window-move' && !/^([1-9]|10)$/.test(workspace || '')) return fail('INVALID_ARGUMENT', 'Choose a workspace from 1 to 10.', true);
+    const windows = windowsOf(id), w = windows.find(x => x.address === address && x.pid === Number(pid));
+    if (!w) return fail('NOT_FOUND', 'That window is gone.', true);
+    if (w.task && liveTaskOf(id)?.task_ref === w.task) { w.claimed = true; return fail('BUSY', 'An agent is using this window. Stop its task first.', true); }
+    if (command === 'operator-window-move') { w.workspace = Number(workspace); return opReply(requestId, command, id, {moved:true, workspace:w.workspace}); }
+    if (w.asks_to_save) return opReply(requestId, command, id, {closed:false});
+    windows.splice(windows.indexOf(w), 1);
+    return opReply(requestId, command, id, {closed:true});
   }
   if (command === 'operator-artifacts') return opReply(requestId, command, id, {items:[], next_cursor:null, total:0});
   if (command === 'operator-artifact-save') return respond(requestId, command, null, {code:'DEVELOPMENT_ONLY',message:'Fictional computers hold no real results. Nothing was saved.',retry_safe:true}, 'failed');

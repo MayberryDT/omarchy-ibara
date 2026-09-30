@@ -39,7 +39,7 @@ Item {
   readonly property bool canRename: !!computer && computer.trust_state === "verified"
   readonly property string controlReason: host ? host.controlBlockedReason(computer) : "Unavailable"
   readonly property var tabs: [
-    { id: "screen", label: "Screen" }, { id: "activity", label: "Activity" }, { id: "files", label: "Files" },
+    { id: "screen", label: "Screen" }, { id: "windows", label: "Windows" }, { id: "activity", label: "Activity" }, { id: "files", label: "Files" },
     { id: "access", label: "Access" }, { id: "system", label: "System" }, { id: "settings", label: "Settings" }
   ]
   // A pause a person made waits for Resume, and so does ibara's own pause after a restart when
@@ -92,7 +92,7 @@ Item {
     if (service && service.renameComputer(computerId, name)) endRename()
   }
   function currentTab() {
-    var page = tab === "activity" ? activityPage : tab === "files" ? filesPage : tab === "access" ? accessPage : tab === "system" ? systemPage : tab === "settings" ? settingsPage : screenPage
+    var page = tab === "windows" ? windowsPage : tab === "activity" ? activityPage : tab === "files" ? filesPage : tab === "access" ? accessPage : tab === "system" ? systemPage : tab === "settings" ? settingsPage : screenPage
     return page.item
   }
   function indexOfComputer(id) {
@@ -606,6 +606,19 @@ Item {
             computer: root.computer
             // From 1400 px wide the rail stands beside the picture; narrower, under it.
             railBeside: root.width >= root.tokens.wideAt
+          }
+        }
+      }
+      TabPage {
+        id: windowsPage
+        page: "windows"
+        current: root.tab
+        sourceComponent: Component {
+          WindowsTab {
+            host: root.host
+            service: root.service
+            computerId: root.computerId
+            computer: root.computer
           }
         }
       }

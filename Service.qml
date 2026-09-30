@@ -255,7 +255,7 @@ Item {
   // computer's tabs last read (see scopedCache) while its tabs read again.
   property string scopedComputerId: ""
   property int scopeGeneration: 0
-  readonly property var scopedReadKinds: ["tasks", "task", "artifacts", "procedures", "procedure", "health", "logs", "access", "computer-settings"]
+  readonly property var scopedReadKinds: ["tasks", "task", "artifacts", "procedures", "procedure", "health", "logs", "access", "computer-settings", "windows"]
   function scopeComputer(computerId) {
     var id = String(computerId || "")
     if (id && !sessions[id]) return false
@@ -281,7 +281,7 @@ Item {
   // An entry holds only while the computer keeps the endpoint, binding revision and authorization
   // generation it was read under. A refusal or failed read drops it, a computer that leaves the
   // directory is dropped, and clearProtectedViews drops them all.
-  readonly property var cachedReadKinds: ["tasks", "artifacts", "procedures", "health", "logs", "access", "computer-settings"]
+  readonly property var cachedReadKinds: ["tasks", "artifacts", "procedures", "health", "logs", "access", "computer-settings", "windows"]
   property var scopedCache: ({})
   property var scopedReadAt: ({})
   function cacheIdentity(computerId) {
@@ -289,11 +289,12 @@ Item {
     return s && s.trust_state === "verified" && s.endpoint_id ? [s.endpoint_id, s.binding_revision, s.authorization_generation].join("|") : ""
   }
   function emptyScopedValue(kind) {
-    return kind === "health" ? ({}) : kind === "access" ? null : []
+    return kind === "health" ? ({}) : kind === "access" ? null : kind === "windows" ? ({ workspaces: [], agent: null }) : []
   }
   function scopedValue(kind) {
     return kind === "tasks" ? tasks : kind === "artifacts" ? artifacts : kind === "procedures" ? procedures
-      : kind === "health" ? health : kind === "logs" ? logLines : kind === "access" ? accessTable : computerSettings
+      : kind === "health" ? health : kind === "logs" ? logLines : kind === "access" ? accessTable
+      : kind === "windows" ? computerWindows : computerSettings
   }
   // A value put back marks its list loaded; an empty value marks it not loaded yet.
   function setScopedValue(kind, value, loaded) {
@@ -304,6 +305,7 @@ Item {
     else if (kind === "logs") logLines = value
     else if (kind === "access") accessTable = value
     else if (kind === "computer-settings") computerSettings = value
+    else if (kind === "windows") { computerWindows = value; windowsLoaded = loaded === true }
   }
   function rememberScoped(kind) {
     var id = scopedComputerId, identity = cacheIdentity(id)
@@ -957,6 +959,19 @@ Item {
   property bool tasksLoaded: false
   property bool artifactsLoaded: false
   property bool proceduresLoaded: false
+  // The scoped computer's workspaces, each with its windows, and the task holding control there
+  // (the `windows` result: {workspaces, agent}).
+  property var computerWindows: ({ workspaces: [], agent: null })
+  property bool windowsLoaded: false
+  // The window a Close or Move To… on the action lane is for: {computerId, address, title}.
+  property var windowAction: null
+  // A Close or Move To… finished for one window: "closed", "open" (it may be asking to save),
+  // "moved", "busy" (an agent is using it), "gone", "pending-close" or "pending-move" (waiting for
+  // approval) or "failed".
+  signal windowActionSettled(string computerId, string address, string outcome)
+  // While the Windows tab has a confirmation or a Move To… list open, a list read in the background
+  // is dropped, not shown: rebuilding the rows would close them. The tab reads again after.
+  property bool windowsHeld: false
   property var accessTable: null
   // The scoped computer's health report (operator-health result) and its last log lines.
   property var health: ({})
@@ -2119,6 +2134,7 @@ Item {
     requestScopedRead("logs", "operator-logs", ["--which", logsWhich, "--lines", "80"])
   }
   function loadComputerSettings() { requestScopedRead("computer-settings", "operator-settings", ["get"]) }
+  function loadWindows() { requestScopedRead("windows", "operator-windows", []) }
   function inspectTask(taskRef) {
     var ref = String(taskRef || "")
     if (!ref) return
@@ -2137,6 +2153,24 @@ Item {
   }
   function extendTask(taskRef, seconds) { return startComputerAction("extend", "operator-task-extend", scopedComputerId, ["--task", String(taskRef), "--seconds", String(seconds)]) }
   function revokeTask(taskRef) { return startComputerAction("revoke", "operator-task-revoke", scopedComputerId, ["--task", String(taskRef)]) }
+  // Close and Move To… on the Windows tab. Close is Hyprland's polite close, so an app can still ask to save.
+  function windowTitle(address) {
+    var spaces = computerWindows.workspaces || []
+    for (var i = 0; i < spaces.length; i++)
+      for (var j = 0; j < spaces[i].windows.length; j++)
+        if (spaces[i].windows[j].address === address) return String(spaces[i].windows[j].title || spaces[i].windows[j].class || "the window")
+    return "the window"
+  }
+  function windowActionFor(kind, command, address, rest) {
+    var id = scopedComputerId
+    if (mutating) { actionError = "Wait for the current action to finish."; return false }
+    windowAction = { computerId: id, address: String(address), title: windowTitle(String(address)) }
+    if (startComputerAction(kind, command, id, ["--address", String(address)].concat(rest))) return true
+    windowAction = null
+    return false
+  }
+  function closeWindow(address, pid) { return windowActionFor("window-close", "operator-window-close", address, ["--pid", String(pid)]) }
+  function moveWindow(address, pid, workspace) { return windowActionFor("window-move", "operator-window-move", address, ["--pid", String(pid), "--workspace", String(workspace)]) }
   // Collect File saves one of the open computer's results into the download folder, never
   // overwriting a file already there.
   function fetchArtifact(artifactRef, name) {
@@ -3246,8 +3280,8 @@ Item {
     readErrors = ({})
     selectedTaskLoading = false
     selectedProcedureLoading = false
-    tasks = []; artifacts = []; procedures = []; accessTable = null; computerSettings = []
-    tasksLoaded = false; artifactsLoaded = false; proceduresLoaded = false
+    tasks = []; artifacts = []; procedures = []; accessTable = null; computerSettings = []; computerWindows = ({ workspaces: [], agent: null })
+    tasksLoaded = false; artifactsLoaded = false; proceduresLoaded = false; windowsLoaded = false
     selectedTask = null; selectedTaskDetail = null; selectedProcedure = null
     selectedTaskDetailRef = ""
     selectedTaskDetailObservedAt = ""
@@ -3568,6 +3602,14 @@ Item {
       else if (kind === "logs") logLines = (Array.isArray(result.lines) ? result.lines : []).slice(-200).map(function(line) { return String(line).slice(0, 400) })
       else if (kind === "access") accessTable = result
       else if (kind === "computer-settings") computerSettings = StatusModel.settingsSections(result)
+      // Published only when it changes, so the rows (and the keyboard on them) stay put between reads.
+      else if (kind === "windows") {
+        if (windowsHeld) return
+        var windowsNow = { workspaces: StatusModel.listOf(result, "workspaces").filter(function(space) { return !!space && typeof space === "object" && Array.isArray(space.windows) }),
+          agent: result.agent && typeof result.agent === "object" ? result.agent : null }
+        if (!sameValue(computerWindows, windowsNow)) computerWindows = windowsNow
+        windowsLoaded = true
+      }
       // First-run lists are polled; each is published only when it changes, so the rows on
       // screen (and the keyboard focus on them) stay put between polls.
       else if (kind === "tailnet") { var tailnetNow = StatusModel.tailnetView(data); if (!sameValue(tailnet, tailnetNow)) tailnet = tailnetNow }
@@ -3632,6 +3674,8 @@ Item {
     if (kind === "operator-take-control" || kind === "operator-handback") pendingControl = null
     var scope = actionScope
     actionScope = null
+    var windowOp = String(kind).indexOf("window-") === 0 ? windowAction : null
+    if (windowOp) windowAction = null
     try {
       var parsed = StatusModel.parseEnvelope(text)
       if (parsed.request_id && parsed.request_id !== actionRequestId) {
@@ -3645,6 +3689,13 @@ Item {
       // An action for one computer reports only on that computer.
       if (scope) {
         if (parsed.error) {
+          if (windowOp) {
+            var windowCode = String(parsed.error.code || "")
+            if (scope.id === scopedComputerId) loadWindows()
+            // Already gone, or an agent is using it: the tab says so beside the window, not in a toast.
+            if (windowCode === "NOT_FOUND" || windowCode === "BUSY") { windowActionSettled(scope.id, windowOp.address, windowCode === "BUSY" ? "busy" : "gone"); return }
+            windowActionSettled(scope.id, windowOp.address, "failed")
+          }
           reportError(plainError(parsed.error.message || parsed.error.code || "Action failed", scope.id, false) +
             (parsed.error.retry_safe === false ? " It may have partly happened; check this tab before trying again." : ""), scope.id, parsed.error)
           if (targetEpochChanged(parsed.error)) forgetControllerEpoch(scope.id)
@@ -3659,11 +3710,27 @@ Item {
         }
         actionError = ""
         actionNotice = kind === "fetch" ? (typeof done.local_path === "string" ? "Saved to " + done.local_path + "." : "Saved in " + downloadFolder + ".") : ""
+        // A held request is answered like any other action's: its approval arrives with the others.
+        if (windowOp) {
+          var windowOutcome = done.state === "pending_approval" ? (kind === "window-close" ? "pending-close" : "pending-move")
+            : kind === "window-close" ? (done.closed === true ? "closed" : "open")
+            : done.moved === true ? "moved" : "failed"
+          if (windowOutcome === "closed") actionNotice = "Closed " + StatusModel.clip(windowOp.title, 80) + "."
+          // As Take Control does: the approval arrives with the others, and the person asks again after it.
+          if (windowOutcome.indexOf("pending-") === 0) {
+            actionNotice = "Waiting for approval. After approval, choose " + (kind === "window-close" ? "Close" : "Move To…") + " again."
+            loadAttention()
+          }
+          if (scope.id === scopedComputerId) loadWindows()
+          windowActionSettled(scope.id, windowOp.address, windowOutcome)
+        }
         if (kind.indexOf("access-") === 0) {
           if (scope.generation === scopeGeneration) loadAccess()
           accessChangeSettled(scope.id, true)
         }
         if (scope.id === scopedComputerId && (kind === "extend" || kind === "revoke")) { loadTasks(); if (selectedTaskRef) inspectTask(selectedTaskRef) }
+        // A stopped task frees its windows: the Windows tab shows them at once.
+        if (scope.id === scopedComputerId && kind === "revoke" && windowsLoaded) loadWindows()
         if (scope.id === scopedComputerId && kind.indexOf("-procedure") !== -1) loadProcedures()
         // Ownership may have changed (a task ended): re-read this computer's own status.
         recheckComputer(scope.id)

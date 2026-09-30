@@ -29,7 +29,7 @@ Panel {
   property var confirmReturnItem: null
   // Where the keyboard goes once the next page is built: { kind: "approval", ref } from the bar.
   property var pendingFocus: null
-  readonly property var computerTabs: ["screen", "activity", "files", "access", "system", "settings"]
+  readonly property var computerTabs: ["screen", "windows", "activity", "files", "access", "system", "settings"]
   readonly property Tokens tokens: Tokens {}
   readonly property var computers: service && Array.isArray(service.computers) ? service.computers : []
   readonly property var computer: computerById(computerId)
