@@ -40,10 +40,12 @@ const FLEET = [
   { name: 'Kiln', screen: 10, agent: 'relay', task: 'Export icon set', minutes: 2 },
   { name: 'Moss', screen: 12, agent: 'laptop', task: 'Check price feed', minutes: 5 },
   { name: 'Lumen', screen: 11, paused: true },
-  { name: 'Fjord', screen: 5, ibara_current: true },
-  { name: 'Juniper', screen: 9 },
+  // Omarchy's update (omarchy): Fjord's fails 15 s after the console first reads it, Juniper's is
+  // still running, and Pike's finished and needs a restart.
+  { name: 'Fjord', screen: 5, ibara_current: true, omarchy: 'fails' },
+  { name: 'Juniper', screen: 9, omarchy: 'running' },
   { name: 'Nimbus', screen: 13, older_ibara: true },
-  { name: 'Pike', screen: 15 },
+  { name: 'Pike', screen: 15, omarchy: 'restart' },
 ];
 const fleet = wallCount === 15;
 const member = id => fleet && /^fictional-/.test(id) && valid(id) ? FLEET[Number(id.slice(10))] : null;
@@ -469,6 +471,26 @@ const answeredApprovals = new Set(); // att_<index>, att_q<index>
 const powerOff = new Map();          // id → when it answers again (Infinity until woken)
 const booted = new Map();            // id → when it last started
 const woken = new Set();             // fleet15 computers woken this run
+// Omarchy's update: id → {started, ends (ms, Infinity while it runs; null until first read for
+// 'fails'), outcome 'done'|'failed', restart}. Update Omarchy runs one for 15 s that ends needing a
+// restart; a restart clears that.
+const omarchyRuns = new Map();
+if (fleet) FLEET.forEach((m, i) => {
+  const id = 'fictional-' + String(i).padStart(2,'0');
+  if (m.omarchy === 'running') omarchyRuns.set(id, {started:started - 4 * 60000, ends:Infinity, outcome:'done', restart:true});
+  if (m.omarchy === 'restart') omarchyRuns.set(id, {started:started - 31 * 60000, ends:started - 25 * 60000, outcome:'done', restart:true});
+  if (m.omarchy === 'fails') omarchyRuns.set(id, {started:null, ends:null, outcome:'failed', restart:false});
+});
+// operator-status `omarchy_update`, as the core reports it (times in epoch ms).
+function omarchyOf(id) {
+  const run = omarchyRuns.get(id);
+  if (!run) return null;
+  if (run.ends === null) { run.started = Date.now(); run.ends = Date.now() + 15000; }
+  if (Date.now() < run.ends) return {state:'running', started_at:run.started, finished_at:null, restart_needed:false, message:null};
+  const failed = run.outcome === 'failed';
+  return {state:run.outcome, started_at:run.started, finished_at:run.ends, restart_needed:!failed && run.restart,
+    message:failed ? `${labelOf(id)}'s Omarchy update failed (exit 1). See journalctl -u ibara-omarchy-update.` : null};
+}
 const cancelledTasks = new Set();    // task refs revoked this run
 const settingValues = new Map();     // 'console' or a computer id → {key: value}
 if (process.env.IBARA_DEV_LIVE_VIDEO === '1') settingValues.set('console', {live_video:true});
@@ -627,7 +649,7 @@ const EPOCH_COMMANDS = new Set(['operator-status','operator-tasks','operator-tas
   'operator-logs','operator-health','operator-repair','operator-answer-attention','operator-power','operator-settings']);
 // The reads that replaced the administrator route; scoped_delay_ms slows them.
 const SCOPED_READS = new Set(['operator-tasks','operator-task','operator-artifacts','operator-procedures','operator-procedure','operator-access','operator-logs','operator-health']);
-const POWER_ACTIONS = ['restart','shutdown','sleep','lock','update','update_ibara'];
+const POWER_ACTIONS = ['restart','shutdown','sleep','lock','update_ibara','update_omarchy'];
 const FICTIONAL_IBARA = '0.1.0-40';
 
 // Every other command: the envelope the fictional wall gives.
@@ -741,7 +763,7 @@ function answer(request) {
     const outputs = denied ? [] : Array.from({length:displayCount}, (_, n) => ({display_id:n ? `fictional-display-${n + 1}` : 'fictional-display',display_revision:'fictional-1',label:n ? `Fictional screen ${n + 1}` : 'Fictional screen'}));
     return opReply(requestId, command, id, {observation:denied?'denied':'available_if_desktop_ready',active_task_ref:activeTask?activeTask.task_ref:null,active_task:activeTask,outputs,files:fleet?'available_if_root_approved':'denied',owner,ownership_revision:ownershipRevision(id, owner),interactive_control:fleet?'available_if_exclusive':'unsupported_without_verified_viewer_adapter',holds_control:controls.has(id),locked:lockedNow(id),
       paused:!!pause,pause_origin:pause,system_wait:pause === 'system' ? (listed('resume_off', id) ? 'resume_off' : 'starting') : null,
-      repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),
+      repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),omarchy_update:omarchyOf(id),
       video:listed('video_incapable', id) ? {capable:false,reason:"This computer can't stream video efficiently."} : {capable:true,reason:null}});
   }
   if (pauseOp) {
@@ -844,14 +866,22 @@ function answer(request) {
   }
   if (command === 'operator-power') {
     const action = option('--action');
-    // fleet15's Nimbus runs an ibara from before Update ibara, which refuses it as older ones do.
-    if (!POWER_ACTIONS.includes(action) || (action === 'update_ibara' && member(id)?.older_ibara)) return fail('INVALID_ARGUMENT', 'Choose restart, shutdown, sleep, lock or update.');
+    // fleet15's Nimbus runs an ibara from before Update ibara, which refuses both updates as older ones do.
+    if (!POWER_ACTIONS.includes(action) || (['update_ibara','update_omarchy'].includes(action) && member(id)?.older_ibara)) return fail('INVALID_ARGUMENT', 'Choose restart, shutdown, sleep, lock or update.');
     if (listed('power_denied', id)) return refused(requestId, command, "OPERATOR_REFUSED: This computer doesn't let you do that. Its owner can allow it in Access.");
-    if (action === 'restart') { powerOff.set(id, Date.now() + 12000); booted.set(id, Date.now() + 12000); }
+    if (action === 'restart') { powerOff.set(id, Date.now() + 12000); booted.set(id, Date.now() + 12000); if (omarchyRuns.has(id)) omarchyRuns.get(id).restart = false; }
     if (action === 'shutdown' || action === 'sleep') powerOff.set(id, Infinity);
-    if (action === 'update_ibara') return opReply(requestId, command, id, member(id)?.ibara_current
+    const omarchyRunning = omarchyOf(id)?.state === 'running';
+    if (action === 'update_ibara') return opReply(requestId, command, id, omarchyRunning
+      ? {action, state:'running', message:"Omarchy is updating on this computer; ibara updates once it's done."}
+      : member(id)?.ibara_current
       ? {action, state:'current', message:`ibara is already up to date (${FICTIONAL_IBARA}).`}
       : {action, state:'started', message:'ibara is updating to the latest release. It may restart its bar when it finishes.'});
+    if (action === 'update_omarchy') {
+      if (omarchyRunning) return opReply(requestId, command, id, {action, state:'running', message:'Omarchy is already updating on this computer.'});
+      omarchyRuns.set(id, {started:Date.now(), ends:Date.now() + 15000, outcome:'done', restart:true});
+      return opReply(requestId, command, id, {action, state:'started', message:'Omarchy is updating. The computer stays usable; it says when a restart is needed.'});
+    }
     return opReply(requestId, command, id, {action, state:'started', ...(action === 'restart' && listed('disk_password', id) ? {disk_password_warning:true} : {})});
   }
   if (command === 'operator-settings') {
@@ -866,9 +896,9 @@ const EVERYDAY_DELAY_MS = {'operator-power':800, 'operator-repair':2500, 'theme-
 function delayOf(command, args) {
   if ((command === 'settings' || command === 'operator-settings') && (args.includes('set') || args.includes('reset'))) return 150;
   if (SCOPED_READS.has(command)) return Number(control().scoped_delay_ms) || 0;
-  // Update All sends every computer's ibara update at once: they answer one after another, as
-  // real computers starting their updates would.
-  if (command === 'operator-power' && ['update','update_ibara'].includes(args[args.indexOf('--action') + 1])) {
+  // Update ibara on All and Update Omarchy on All send every computer's update at once: they
+  // answer one after another, as real computers starting their updates would.
+  if (command === 'operator-power' && ['update_ibara','update_omarchy'].includes(args[args.indexOf('--action') + 1])) {
     const id = args[args.indexOf('--computer') + 1] || '';
     return 800 + (Number(id.slice(10)) || 0) * 350;
   }

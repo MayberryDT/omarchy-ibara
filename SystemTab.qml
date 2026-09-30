@@ -18,7 +18,18 @@ Item {
   readonly property var healthLines: StatusModel.healthLines(health)
   readonly property bool offline: tokens.stateOf(computer) === "offline"
   readonly property string actionReason: host ? host.powerReason(computer) : "Connecting."
+  readonly property string updateReason: host ? host.updateReason(computer) : "Connecting."
   readonly property var lastRepair: health.repair && health.repair.last && typeof health.repair.last === "object" ? health.repair.last : null
+  // Omarchy's update there: running, or how the last one ended, when, and why a failed one failed.
+  readonly property var omarchyUpdate: computer && computer.omarchy_update ? computer.omarchy_update : null
+  readonly property string omarchyUpdateLine: {
+    var u = omarchyUpdate
+    if (!u) return ""
+    if (u.state === "running") return "Updating Omarchy…"
+    var when = u.finished_at > 0 ? " · " + tokens.changedLabel(new Date(u.finished_at).toISOString(), service ? service.nowMs : Date.now()) : ""
+    if (u.state === "failed") return "Omarchy's last update failed" + when + "." + (u.message ? " " + u.message : "") + " Choose Update Omarchy to try again."
+    return "Omarchy updated" + when + (u.restart_needed ? " · restart to finish" : "")
+  }
 
   function reload() {
     if (!service || !visible || !computerId) return
@@ -78,11 +89,19 @@ Item {
           font.pixelSize: Style.font.bodySmall
         }
         Copy {
+          id: lastRepairLine
           visible: !!root.lastRepair
           width: parent.width
           text: root.lastRepair ? "Last repair: " + StatusModel.clip(root.lastRepair.summary, 160) + (root.lastRepair.at ? " · " + root.tokens.changedLabel(new Date(StatusModel.timeMs(root.lastRepair.at)).toISOString(), root.service ? root.service.nowMs : Date.now()) : "") : ""
           dimmed: true
           font.pixelSize: Style.font.bodySmall
+        }
+        Copy {
+          visible: text !== ""
+          width: parent.width
+          text: root.omarchyUpdateLine
+          color: root.omarchyUpdate && root.omarchyUpdate.state === "failed" ? root.tokens.attentionColor : root.tokens.dim
+          font.pixelSize: lastRepairLine.font.pixelSize
         }
         DataAge {
           visible: at > 0
@@ -119,17 +138,17 @@ Item {
           }
           ActionButton {
             label: "Update ibara"
-            tooltipText: "Installs ibara's latest release on " + root.computerLabel + ". Nobody needs to be there."
-            blocked: root.actionReason !== ""
-            disabledReason: root.actionReason
+            tooltipText: "Installs ibara's latest signed release on " + root.computerLabel + ". Nobody needs to be there."
+            blocked: root.updateReason !== ""
+            disabledReason: root.updateReason
             onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "update_ibara")
           }
           ActionButton {
-            label: "Update Omarchy…"
-            tooltipText: "Omarchy's own update opens in a window on " + root.computerLabel + " and asks for its password there."
-            blocked: root.actionReason !== ""
-            disabledReason: root.actionReason
-            onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "update")
+            label: "Update Omarchy"
+            tooltipText: "Runs Omarchy's system update on " + root.computerLabel + " with no questions. Nobody needs to be there."
+            blocked: root.updateReason !== ""
+            disabledReason: root.updateReason
+            onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "update_omarchy")
           }
         }
         Copy {

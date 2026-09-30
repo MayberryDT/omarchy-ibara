@@ -541,8 +541,13 @@ Panel {
     if (viewerOpen(id)) service.closeViewerFor(id)
     else takeControl(id)
   }
-  // Restart, Shut Down, Sleep, Lock Screen, Update Omarchy and Update ibara can't be undone from
+  // Restart, Shut Down, Sleep, Lock Screen, Update ibara and Update Omarchy can't be undone from
   // here, so each asks first, beside the control that asked, and says what happens next.
+  readonly property var updateLines: ({
+    update_ibara: "Updates ibara to the latest signed release. Nobody needs to be there.",
+    update_omarchy: "Runs Omarchy's system update (packages, kernel, firmware) with no questions. Nobody needs to be there; a restart may be needed after."
+  })
+  readonly property var updateLabels: ({ update_ibara: "Update ibara", update_omarchy: "Update Omarchy" })
   function confirmPower(id, action, anchor) {
     var c = computerById(id)
     if (!c || !service) return
@@ -552,22 +557,21 @@ Panel {
       shutdown: "Shut down " + name + "?" + (wakeable ? " Wake can turn it on again from here." : " Someone must turn it on again there."),
       sleep: "Put " + name + " to sleep?" + (wakeable ? " Wake wakes it from here." : " ibara has no way to wake it from here, so someone must wake it there."),
       lock: "Lock " + name + "'s screen? Agents can't use its desktop until someone unlocks it there.",
-      update: "Update Omarchy on " + name + "? The update opens in a window there and asks for its password, so someone must be at it. It may restart when the update finishes.",
-      update_ibara: "Update ibara on " + name + " to the latest release? Nobody needs to be there. ibara may restart its bar there when it finishes."
+      update_ibara: updateLabels.update_ibara + " on " + name + "? " + updateLines.update_ibara,
+      update_omarchy: updateLabels.update_omarchy + " on " + name + "? " + updateLines.update_omarchy
     })[action]
     if (!text) return
     askConfirm({
       anchor: anchor,
       message: text,
-      confirmLabel: ({ restart: "Restart", shutdown: "Shut Down", sleep: "Sleep", lock: "Lock Screen", update: "Update Omarchy", update_ibara: "Update ibara" })[action],
+      confirmLabel: ({ restart: "Restart", shutdown: "Shut Down", sleep: "Sleep", lock: "Lock Screen", update_ibara: "Update ibara", update_omarchy: "Update Omarchy" })[action],
       danger: ["restart", "shutdown", "sleep"].indexOf(action) !== -1,
       subject: id,
       run: function() { root.service.power(id, action) },
       valid: function() { return !!root.computerById(id) }
     })
   }
-  // Why Restart, Shut Down, Sleep, Lock Screen, Update Omarchy and Update ibara can't run on a
-  // computer now, or "" when they can. The System tab's buttons and Update All both ask here.
+  // Why Restart, Shut Down, Sleep and Lock Screen can't run on a computer now, or "" when they can.
   function powerReason(c) {
     if (!service) return "Connecting."
     if (service.denied) return "You don't have access."
@@ -575,18 +579,26 @@ Panel {
     if (service.busy["power:" + String(c.computer_id)]) return "ibara is still sending " + tokens.label(c) + " the last one."
     return ""
   }
+  // The same for Update ibara and Update Omarchy, which also wait while Omarchy updates there.
+  // The System tab's buttons and Update … on All both ask here.
+  function updateReason(c) {
+    var why = powerReason(c)
+    if (why) return why
+    return c && c.omarchy_update && c.omarchy_update.state === "running" ? tokens.label(c) + " is updating Omarchy now." : ""
+  }
   function shortList(names, most) {
     var shown = names.length > most ? names.slice(0, most - 1).concat([(names.length - most + 1) + " more"]) : names
     return shown.length < 2 ? shown.join("") : shown.slice(0, -1).join(", ") + " and " + shown[shown.length - 1]
   }
-  // Update All (Fleet Actions): Update ibara on each computer whose own is allowed now, this
-  // computer last; the rest are said with why. blocked: why none can update, or "".
+  // Update ibara on All and Update Omarchy on All (Fleet Actions): the update on each computer
+  // whose own is allowed now, this computer last; the rest are said with why. blocked: why none
+  // can update, or "".
   function updateAllPlan() {
     var ready = [], skipped = [], self = null, selfId = service ? String(service.thisComputerId || "") : ""
     for (var i = 0; i < computers.length; i++) {
       var c = computers[i]
       if (!c || !c.computer_id) continue
-      var why = powerReason(c)
+      var why = updateReason(c)
       if (why) skipped.push(why.replace(/\.$/, ""))
       else if (String(c.computer_id) === selfId) self = c
       else ready.push(c)
@@ -596,26 +608,26 @@ Panel {
       : !ready.length ? (skipped.length ? "None can update now: " + shortList(skipped, 3) + "." : "No computers to update.") : ""
     return { ready: ready, skipped: skipped, selfId: self ? selfId : "", blocked: blocked }
   }
-  function confirmUpdateAll(anchor) {
-    var plan = updateAllPlan()
-    if (plan.blocked) return
+  function confirmUpdateAll(action, anchor) {
+    var plan = updateAllPlan(), label = updateLabels[action]
+    if (plan.blocked || !label) return
     var ids = plan.ready.map(function(c) { return String(c.computer_id) })
     var names = plan.ready.map(function(c) { return String(c.computer_id) === plan.selfId ? "this computer" : tokens.label(c) })
     var count = ids.length
     askConfirm({
       anchor: anchor,
-      message: "Update ibara on " + (count === 1 ? names[0] : count + " computers: " + shortList(names, 5)) + " to the latest release? " +
-        "Nobody needs to be at " + (count === 1 ? "it" : "them") + ". ibara may restart its bar on " + (count === 1 ? "it" : "each") + " when it finishes." + (plan.selfId && count > 1 ? " This computer goes last." : "") +
+      message: label + " on " + (count === 1 ? names[0] : count + " computers: " + shortList(names, 5)) + "? " + updateLines[action] +
+        (plan.selfId && count > 1 ? " This computer goes last." : "") +
         (plan.skipped.length ? " " + plan.skipped.length + " can't: " + shortList(plan.skipped, 3) + "." : ""),
-      confirmLabel: count === 1 ? "Update ibara" : "Update " + count,
+      confirmLabel: count === 1 ? label : "Update " + count,
       run: function() {
-        root.service.updateAll(ids.filter(function(id) { return id !== plan.selfId }), plan.selfId)
+        root.service.updateAll(action, ids.filter(function(id) { return id !== plan.selfId }), plan.selfId)
       },
       valid: function() {
         var now = root.updateAllPlan()
         return !now.blocked && now.ready.map(function(c) { return String(c.computer_id) }).join("\n") === ids.join("\n")
       },
-      staleMessage: "Nothing was updated: which computers can update changed while you were confirming. Choose Update All again to see them."
+      staleMessage: "Nothing was updated: which computers can update changed while you were confirming. Choose " + label + " on All again to see them."
     })
   }
 

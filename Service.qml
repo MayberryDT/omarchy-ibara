@@ -172,8 +172,9 @@ Item {
     return { ref: ref, title: StatusModel.clip(value.title, 160), outcome: value.outcome, finished_at: String(value.finished_at || "") }
   }
   // Moments the console shows on a computer's picture: its agent clicked at (x, y), a fraction of
-  // the screen; its task finished done. Each fires once, when a later status read differs from
-  // the one before, so opening the console never replays an old click or Done.
+  // the screen; its task finished done. Omarchy's update there failing is a toast. Each fires once,
+  // when a later status read differs from the one before, so opening the console never replays an
+  // old click, Done or failure.
   signal agentClicked(string computerId, real x, real y)
   signal taskDone(string computerId)
   // An agent began its first task through this computer: its name and the computer it uses ("" when unknown).
@@ -184,6 +185,9 @@ Item {
     if (newPoint && (!oldPoint || oldPoint.at !== newPoint.at)) agentClicked(computerId, newPoint.x, newPoint.y)
     var oldRef = before.last_task ? before.last_task.ref : ""
     if (after.last_task && after.last_task.ref !== oldRef && after.last_task.outcome === "done") taskDone(computerId)
+    var oldUpdate = before.omarchy_update, newUpdate = after.omarchy_update
+    if (newUpdate && newUpdate.state === "failed" && !(oldUpdate && oldUpdate.state === "failed" && oldUpdate.finished_at === newUpdate.finished_at))
+      powerAnswered(computerId, "update_omarchy", "Omarchy's update on " + computerLabelFor(computerId) + " failed. See its System tab.", true)
   }
   // The first agent to begin a task here: a toast names it and the computer it is using, whose
   // card lights up once. The computer is the one whose running task started last.
@@ -2690,15 +2694,15 @@ Item {
     sendToComputer("operator-repair", id, [String(fix)], { fix: String(fix) }, "repair:" + id)
     return true
   }
-  // ---- Restart, Shut Down, Sleep, Lock, Update (Omarchy's own update, in a window there) and
-  // Update ibara (ibara's signed release, with nobody at the computer). The console confirms those
-  // that can't be undone.
-  // `apart`: the answer comes as powerAnswered, one message per computer (Update All), instead of
-  // the console's one action message.
+  // ---- Restart, Shut Down, Sleep, Lock, Update ibara (ibara's signed release) and Update Omarchy
+  // (Omarchy's system update), both with nobody at the computer. The console confirms those that
+  // can't be undone.
+  // `apart`: the answer comes as powerAnswered, one message per computer (Update … on All),
+  // instead of the console's one action message.
   signal powerAnswered(string computerId, string action, string text, bool failed)
   function power(computerId, action, apart) {
     var id = String(computerId || "")
-    if (!sessions[id] || ["restart", "shutdown", "sleep", "lock", "update", "update_ibara"].indexOf(action) === -1 || busy["power:" + id]) return false
+    if (!sessions[id] || ["restart", "shutdown", "sleep", "lock", "update_ibara", "update_omarchy"].indexOf(action) === -1 || busy["power:" + id]) return false
     var route = { action: action }
     if (apart === true) {
       route.apart = true
@@ -2711,25 +2715,26 @@ Item {
     powerAnswered(id, action, text, failed)
     if (!updateAllRun) return
     var waiting = updateAllRun.waiting.filter(function(other) { return other !== id })
-    updateAllRun = { waiting: waiting, last: updateAllRun.last }
+    updateAllRun = { action: updateAllRun.action, waiting: waiting, last: updateAllRun.last }
     if (!waiting.length) sendLastUpdate()
   }
-  // ---- Update All: Update ibara on each of these computers at once, and on `last` (this computer)
-  // once every other one has answered, so its own update can't cut the others off.
-  // updateAllRun: null, or { waiting: [ids not answered yet], last }.
+  // ---- Update ibara on All and Update Omarchy on All: `action` (update_ibara or update_omarchy)
+  // on each of these computers at once, and on `last` (this computer) once every other one has
+  // answered, so its own update can't cut the others off.
+  // updateAllRun: null, or { action, waiting: [ids not answered yet], last }.
   property var updateAllRun: null
-  function updateAll(ids, last) {
-    if (updateAllRun) return false
+  function updateAll(action, ids, last) {
+    if (updateAllRun || ["update_ibara", "update_omarchy"].indexOf(action) === -1) return false
     var sent = []
-    for (var i = 0; i < ids.length; i++) if (power(ids[i], "update_ibara", true)) sent.push(String(ids[i]))
-    updateAllRun = { waiting: sent, last: String(last || "") }
+    for (var i = 0; i < ids.length; i++) if (power(ids[i], action, true)) sent.push(String(ids[i]))
+    updateAllRun = { action: action, waiting: sent, last: String(last || "") }
     if (!sent.length) sendLastUpdate()
     return true
   }
   function sendLastUpdate() {
-    var last = updateAllRun ? updateAllRun.last : ""
+    var last = updateAllRun ? updateAllRun.last : "", action = updateAllRun ? updateAllRun.action : ""
     updateAllRun = null
-    if (last) power(last, "update_ibara", true)
+    if (last) power(last, action, true)
   }
   // ---- Wake: this computer, or another on the same network, sends the wake signal.
   function canWake(computerId) {
@@ -3115,9 +3120,10 @@ Item {
       loadAttention()
     } else if (op === "operator-power") {
       var name = computerLabelFor(id), s = sessions[id]
-      // An older ibara there doesn't know Update ibara yet: it needs one update by hand.
-      var older = !!error && route.action === "update_ibara" && error.code === "INVALID_ARGUMENT"
-      if (older) plain = name + " runs an older ibara. Update it once at that computer (ibara update), then Update All works."
+      // An older ibara there doesn't know the update it was asked for: Update ibara needs one update
+      // by hand there; Update Omarchy needs Update ibara first.
+      var older = !!error && ["update_ibara", "update_omarchy"].indexOf(route.action) !== -1 && error.code === "INVALID_ARGUMENT"
+      if (older) plain = name + " runs an older ibara. " + (route.action === "update_ibara" ? "Update it once at that computer (ibara update), then Update ibara works." : "Choose Update ibara first.")
       if (error) {
         if (route.apart) powerSettled(id, route.action, older ? plain : name + " didn't update. " + (plain || "ibara couldn't reach it."), true)
         else reportError(plain || "ibara couldn't do that on " + name + ".", id, error)
@@ -3129,11 +3135,13 @@ Item {
       else if (route.action === "sleep") said = name + " is going to sleep. Choose Wake to wake it."
       else if (route.action === "lock") said = name + "'s screen is locked."
       else if (route.action === "update_ibara") said = name + ": " + (StatusModel.clip(result.message, 200) || (result.state === "current" ? "ibara is already up to date." : "ibara is updating to the latest release. It may restart its bar when it finishes."))
-      else said = name + " is updating. It may restart when it finishes."
+      else said = name + ": " + (StatusModel.clip(result.message, 200) || (result.state === "running" ? "Omarchy is already updating on this computer." : "Omarchy is updating. The computer stays usable; it says when a restart is needed."))
       if (route.apart) powerSettled(id, route.action, said, false)
       else actionNotice = said
       // It stops answering now; the card says why, and dims, until it answers again.
       if (["restart", "shutdown", "sleep"].indexOf(route.action) !== -1) updateSession(id, { power_state: route.action, connection: "offline" })
+      // Its card says Updating Omarchy… at once; the next status read says how it goes.
+      if (route.action === "update_omarchy" && result.state === "started") { updateSession(id, { omarchy_update: { state: "running", finished_at: 0, restart_needed: false, message: "" } }); recheckComputer(id) }
     } else if (op === "wake") {
       if (error) { reportError(plain || "ibara couldn't wake " + computerLabelFor(id) + ".", id, error); return }
       var via = String(data.sent_via || "")
@@ -3437,6 +3445,7 @@ Item {
             // Its screen is locked: agents can't use it until a person unlocks it with Take Control.
             locked: authenticated.locked === true,
             disk_password: authenticated.disk_password !== undefined ? authenticated.disk_password === true : identity.disk_password === true,
+            omarchy_update: StatusModel.omarchyUpdateView(authenticated.omarchy_update),
             video: StatusModel.videoView(authenticated.video)
           })
           publishSessions(statusSessions)

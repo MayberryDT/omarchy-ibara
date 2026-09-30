@@ -43,9 +43,11 @@ Item {
   readonly property Tokens tokens: Tokens {}
   readonly property var computers: service && Array.isArray(service.computers) ? service.computers.filter(function(c) { return !!(c && c.computer_id) }) : []
   readonly property var favorites: host ? host.favorites : ({})
-  // Why Fleet Actions' Update All can't run now, or "". A string, so the menu's items change only
-  // when the answer does, not with every picture.
+  // Why Fleet Actions' Update ibara on All and Update Omarchy on All can't run now, or "". A
+  // string, so the menu's items change only when the answer does, not with every picture.
   readonly property string updateAllBlocked: host ? host.updateAllPlan().blocked : "Connecting."
+  // The one being sent now (update_ibara or update_omarchy), or "".
+  readonly property string updateAllAction: service && service.updateAllRun ? String(service.updateAllRun.action || "") : ""
   readonly property var counts: {
     var c = service && service.fleetCounts ? service.fleetCounts : null
     if (c) return c
@@ -338,12 +340,14 @@ Item {
         items: [
           { id: "theme", label: root.service && root.service.busy["theme-fleet"] ? "Applying Theme…" : "Apply Theme to Fleet",
             blocked: !!root.service && !!root.service.busy["theme-fleet"], reason: "ibara is applying it now." },
-          { id: "update", label: root.service && root.service.updateAllRun ? "Updating…" : "Update All…",
+          { id: "update_ibara", label: root.updateAllAction === "update_ibara" ? "Updating ibara…" : "Update ibara on All…",
+            blocked: root.updateAllBlocked !== "", reason: root.updateAllBlocked },
+          { id: "update_omarchy", label: root.updateAllAction === "update_omarchy" ? "Updating Omarchy…" : "Update Omarchy on All…",
             blocked: root.updateAllBlocked !== "", reason: root.updateAllBlocked }
         ]
         onTriggered: id => {
           if (id === "theme" && root.service) root.service.applyThemeToFleet()
-          else if (id === "update" && root.host) root.host.confirmUpdateAll(fleetActions.button)
+          else if (root.host) root.host.confirmUpdateAll(id, fleetActions.button)
         }
       }
       ActionButton {
@@ -498,12 +502,14 @@ Item {
         // Close Viewer, or Hand Back, as if chosen there.
         function pressControl(control) { return focused && !!actionsLoader.item && actionsLoader.item.press(control) }
         // The one thing this card offers without hovering: Fix It for a repair ibara couldn't
-        // make, Resume for a person's pause, or Wake for a computer that is off or asleep.
+        // make, Restart once Omarchy's update needs one to finish, Resume for a person's pause, or
+        // Wake for a computer that is off or asleep.
         readonly property string standing: {
           var c = computer
           if (!c) return ""
           if (fleetState === "offline") return c.wake ? "wake" : ""
           if (c.needs_person && c.needs_person.fix) return "fix"
+          if (StatusModel.restartNeeded(c)) return "restart"
           if (StatusModel.pauseAction(c) === "resume") return "resume"
           return ""
         }
@@ -658,18 +664,23 @@ Item {
                   ActionButton {
                     id: standingButton
                     visible: cell.standing !== ""
-                    readonly property string busyKey: (cell.standing === "fix" ? "repair:" : cell.standing === "resume" ? "pause:" : "wake:") + cell.computerId
-                    readonly property bool busy: !!root.service && !!root.service.busy[busyKey]
-                    label: cell.standing === "fix" ? (busy ? "Fixing…" : "Fix It") : cell.standing === "resume" ? (busy ? "Resuming…" : "Resume") : (busy ? "Waking…" : "Wake")
+                    readonly property var kind: ({
+                      fix: { busyKey: "repair:", label: "Fix It", busyLabel: "Fixing…" },
+                      restart: { busyKey: "power:", label: "Restart", busyLabel: "Restarting…", tip: "Omarchy updated it; a restart finishes the update" },
+                      resume: { busyKey: "pause:", label: "Resume", busyLabel: "Resuming…", tip: "Let its agents work again" },
+                      wake: { busyKey: "wake:", label: "Wake", busyLabel: "Waking…", tip: "Send it the signal to turn on" }
+                    })[cell.standing] || ({})
+                    readonly property bool busy: !!root.service && !!kind.busyKey && !!root.service.busy[kind.busyKey + cell.computerId]
+                    label: (busy ? kind.busyLabel : kind.label) || ""
                     role: "primary"
                     size: "small"
                     blocked: busy
-                    tooltipText: cell.standing === "fix" && cell.computer && cell.computer.needs_person ? StatusModel.fixDescription(cell.computer.needs_person.fix)
-                      : cell.standing === "resume" ? "Let its agents work again" : "Send it the signal to turn on"
+                    tooltipText: cell.standing === "fix" && cell.computer && cell.computer.needs_person ? StatusModel.fixDescription(cell.computer.needs_person.fix) : kind.tip || ""
                     Accessible.name: label + " " + root.tokens.label(cell.computer)
                     onClicked: {
                       if (blocked || !root.service) return
                       if (cell.standing === "fix") root.service.repair(cell.computerId, cell.computer.needs_person.fix)
+                      else if (cell.standing === "restart") { if (root.host) root.host.confirmPower(cell.computerId, "restart", standingButton) }
                       else if (cell.standing === "resume") root.service.resumeAgents(cell.computerId)
                       else root.service.wake(cell.computerId)
                     }

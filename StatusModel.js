@@ -497,6 +497,10 @@ function activityLine(session, nowMs) {
     if (session.trust_state !== undefined && session.trust_state !== "verified") return "Not paired · pair it again from Add Computer"
     return clip(session.frame_error || "Needs attention · open it to see why", 80)
   }
+  // Omarchy's own update: while it runs, and once it waits for a restart.
+  var omarchy = asObject(session.omarchy_update)
+  if (omarchy.state === "running") return "Updating Omarchy…"
+  if (omarchy.state === "done" && restartNeeded(session)) return "Updated · restart to finish"
   if (title) return title + age
   var actor = fleetActor(session)
   if (state === "human") return actor === "you" ? "You have control" : "Controlled by " + actor
@@ -590,6 +594,20 @@ function wakeView(value) {
   var mac = String(value.mac || "")
   if (!/^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/.test(mac)) return null
   return { mac: mac, kind: value.kind === "wifi" ? "wifi" : "ethernet", from_off: value.from_off === true, subnet: clip(value.subnet, 64), ifname: clip(value.ifname, 32) }
+}
+
+// Omarchy's own update there (operator-status `omarchy_update`): the last or current run, or null.
+// finished_at is epoch ms (0 while it runs); message says why a failed one failed.
+function omarchyUpdateView(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  if (["running", "done", "failed"].indexOf(value.state) === -1) return null
+  var finished = timeMs(value.finished_at)
+  return { state: String(value.state), finished_at: isFinite(finished) ? finished : 0, restart_needed: value.restart_needed === true, message: clip(value.message, 240) }
+}
+// Omarchy's update finished and the computer needs a restart to finish it (its kernel changed).
+function restartNeeded(session) {
+  var update = asObject(asObject(session).omarchy_update)
+  return update.restart_needed === true && update.state !== "running"
 }
 
 // fleet-attention: approvals to answer, agents' questions and computers that need a person,
