@@ -541,8 +541,8 @@ Panel {
     if (viewerOpen(id)) service.closeViewerFor(id)
     else takeControl(id)
   }
-  // Restart, Shut Down, Sleep, Lock Screen and Update can't be undone from here, so each asks
-  // first, beside the control that asked, and says what happens next.
+  // Restart, Shut Down, Sleep, Lock Screen, Update Omarchy and Update ibara can't be undone from
+  // here, so each asks first, beside the control that asked, and says what happens next.
   function confirmPower(id, action, anchor) {
     var c = computerById(id)
     if (!c || !service) return
@@ -552,21 +552,22 @@ Panel {
       shutdown: "Shut down " + name + "?" + (wakeable ? " Wake can turn it on again from here." : " Someone must turn it on again there."),
       sleep: "Put " + name + " to sleep?" + (wakeable ? " Wake wakes it from here." : " ibara has no way to wake it from here, so someone must wake it there."),
       lock: "Lock " + name + "'s screen? Agents can't use its desktop until someone unlocks it there.",
-      update: "Update " + name + "? It may restart when the update finishes."
+      update: "Update Omarchy on " + name + "? The update opens in a window there and asks for its password, so someone must be at it. It may restart when the update finishes.",
+      update_ibara: "Update ibara on " + name + " to the latest release? Nobody needs to be there. ibara may restart its bar there when it finishes."
     })[action]
     if (!text) return
     askConfirm({
       anchor: anchor,
       message: text,
-      confirmLabel: ({ restart: "Restart", shutdown: "Shut Down", sleep: "Sleep", lock: "Lock Screen", update: "Update" })[action],
+      confirmLabel: ({ restart: "Restart", shutdown: "Shut Down", sleep: "Sleep", lock: "Lock Screen", update: "Update Omarchy", update_ibara: "Update ibara" })[action],
       danger: ["restart", "shutdown", "sleep"].indexOf(action) !== -1,
       subject: id,
       run: function() { root.service.power(id, action) },
       valid: function() { return !!root.computerById(id) }
     })
   }
-  // Why Restart, Shut Down, Sleep, Lock Screen and Update can't run on a computer now, or "" when
-  // they can. The System tab's buttons and Update All both ask here.
+  // Why Restart, Shut Down, Sleep, Lock Screen, Update Omarchy and Update ibara can't run on a
+  // computer now, or "" when they can. The System tab's buttons and Update All both ask here.
   function powerReason(c) {
     if (!service) return "Connecting."
     if (service.denied) return "You don't have access."
@@ -578,8 +579,8 @@ Panel {
     var shown = names.length > most ? names.slice(0, most - 1).concat([(names.length - most + 1) + " more"]) : names
     return shown.length < 2 ? shown.join("") : shown.slice(0, -1).join(", ") + " and " + shown[shown.length - 1]
   }
-  // Update All (Fleet Actions): each computer whose own Update is allowed now, this computer
-  // last; the rest are said with why. blocked: why none can update, or "".
+  // Update All (Fleet Actions): Update ibara on each computer whose own is allowed now, this
+  // computer last; the rest are said with why. blocked: why none can update, or "".
   function updateAllPlan() {
     var ready = [], skipped = [], self = null, selfId = service ? String(service.thisComputerId || "") : ""
     for (var i = 0; i < computers.length; i++) {
@@ -603,10 +604,10 @@ Panel {
     var count = ids.length
     askConfirm({
       anchor: anchor,
-      message: "Update " + (count === 1 ? names[0] : count + " computers: " + shortList(names, 5)) + "? " +
-        (count === 1 ? "It" : "Each") + " may restart when its update finishes." + (plan.selfId && count > 1 ? " This computer goes last." : "") +
+      message: "Update ibara on " + (count === 1 ? names[0] : count + " computers: " + shortList(names, 5)) + " to the latest release? " +
+        "Nobody needs to be at " + (count === 1 ? "it" : "them") + ". ibara may restart its bar on " + (count === 1 ? "it" : "each") + " when it finishes." + (plan.selfId && count > 1 ? " This computer goes last." : "") +
         (plan.skipped.length ? " " + plan.skipped.length + " can't: " + shortList(plan.skipped, 3) + "." : ""),
-      confirmLabel: count === 1 ? "Update" : "Update " + count,
+      confirmLabel: count === 1 ? "Update ibara" : "Update " + count,
       run: function() {
         root.service.updateAll(ids.filter(function(id) { return id !== plan.selfId }), plan.selfId)
       },

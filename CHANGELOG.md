@@ -4,7 +4,9 @@ The plugin ships inside ibara's `ibara` package, and `ibara update` updates both
 
 ## Unreleased
 
-- Fleet Actions has Update All…: one confirmation names how many computers will update and which, and which can't and why (off, or still sending an earlier action). Every computer whose own Update is allowed starts updating, this computer last, once the others have answered; each one's answer is its own toast.
+- A locked computer you hold control of reads You have control with "Screen locked · type its password in the viewer", not Locked, and its locked toast no longer appears after you took control.
+- Fleet Actions has Update All…: one confirmation names how many computers will update and which, and which can't and why (off, or still sending an earlier action). Every computer whose own update is allowed starts updating ibara, this computer last, once the others have answered; each one's answer is its own toast.
+- Update All and a computer's new **Update ibara** (System tab) install ibara's latest signed release with nobody at the computer and no password. A computer already up to date says so. A computer on an older ibara says to update it once there (`ibara update`), after which Update All works. Omarchy's own system update, which still asks for the password at the computer, is now **Update Omarchy…** on the System tab.
 - Fleet card hover: a top-row card rising under the pointer stays whole instead of sliding under the toolbar.
 - A computer that joins the fleet while the console is open arrives once, the first time its card is in view: "On your fleet", then its picture comes up from dark, and an accent ring holds on the card and fades.
 - Pairing by code: when the other computer accepts, Add Computer shows the match (the code panel turns the ready color, the code pops, a check, "Matched. NAME accepted.") before it goes to the fleet. On the computer being asked, Accept shows the same match on the request card instead of a separate toast.

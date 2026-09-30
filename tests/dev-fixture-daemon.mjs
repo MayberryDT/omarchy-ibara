@@ -40,9 +40,9 @@ const FLEET = [
   { name: 'Kiln', screen: 10, agent: 'relay', task: 'Export icon set', minutes: 2 },
   { name: 'Moss', screen: 12, agent: 'laptop', task: 'Check price feed', minutes: 5 },
   { name: 'Lumen', screen: 11, paused: true },
-  { name: 'Fjord', screen: 5 },
+  { name: 'Fjord', screen: 5, ibara_current: true },
   { name: 'Juniper', screen: 9 },
-  { name: 'Nimbus', screen: 13 },
+  { name: 'Nimbus', screen: 13, older_ibara: true },
   { name: 'Pike', screen: 15 },
 ];
 const fleet = wallCount === 15;
@@ -627,7 +627,8 @@ const EPOCH_COMMANDS = new Set(['operator-status','operator-tasks','operator-tas
   'operator-logs','operator-health','operator-repair','operator-answer-attention','operator-power','operator-settings']);
 // The reads that replaced the administrator route; scoped_delay_ms slows them.
 const SCOPED_READS = new Set(['operator-tasks','operator-task','operator-artifacts','operator-procedures','operator-procedure','operator-access','operator-logs','operator-health']);
-const POWER_ACTIONS = ['restart','shutdown','sleep','lock','update'];
+const POWER_ACTIONS = ['restart','shutdown','sleep','lock','update','update_ibara'];
+const FICTIONAL_IBARA = '0.1.0-40';
 
 // Every other command: the envelope the fictional wall gives.
 function answer(request) {
@@ -843,10 +844,14 @@ function answer(request) {
   }
   if (command === 'operator-power') {
     const action = option('--action');
-    if (!POWER_ACTIONS.includes(action)) return fail('INVALID_ARGUMENT', 'Choose restart, shutdown, sleep, lock or update.');
+    // fleet15's Nimbus runs an ibara from before Update ibara, which refuses it as older ones do.
+    if (!POWER_ACTIONS.includes(action) || (action === 'update_ibara' && member(id)?.older_ibara)) return fail('INVALID_ARGUMENT', 'Choose restart, shutdown, sleep, lock or update.');
     if (listed('power_denied', id)) return refused(requestId, command, "OPERATOR_REFUSED: This computer doesn't let you do that. Its owner can allow it in Access.");
     if (action === 'restart') { powerOff.set(id, Date.now() + 12000); booted.set(id, Date.now() + 12000); }
     if (action === 'shutdown' || action === 'sleep') powerOff.set(id, Infinity);
+    if (action === 'update_ibara') return opReply(requestId, command, id, member(id)?.ibara_current
+      ? {action, state:'current', message:`ibara is already up to date (${FICTIONAL_IBARA}).`}
+      : {action, state:'started', message:'ibara is updating to the latest release. It may restart its bar when it finishes.'});
     return opReply(requestId, command, id, {action, state:'started', ...(action === 'restart' && listed('disk_password', id) ? {disk_password_warning:true} : {})});
   }
   if (command === 'operator-settings') {
@@ -861,9 +866,9 @@ const EVERYDAY_DELAY_MS = {'operator-power':800, 'operator-repair':2500, 'theme-
 function delayOf(command, args) {
   if ((command === 'settings' || command === 'operator-settings') && (args.includes('set') || args.includes('reset'))) return 150;
   if (SCOPED_READS.has(command)) return Number(control().scoped_delay_ms) || 0;
-  // Update All sends every computer's update at once: they answer one after another, as real
-  // computers starting their updates would.
-  if (command === 'operator-power' && args[args.indexOf('--action') + 1] === 'update') {
+  // Update All sends every computer's ibara update at once: they answer one after another, as
+  // real computers starting their updates would.
+  if (command === 'operator-power' && ['update','update_ibara'].includes(args[args.indexOf('--action') + 1])) {
     const id = args[args.indexOf('--computer') + 1] || '';
     return 800 + (Number(id.slice(10)) || 0) * 350;
   }

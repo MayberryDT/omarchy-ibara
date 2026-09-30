@@ -2690,13 +2690,15 @@ Item {
     sendToComputer("operator-repair", id, [String(fix)], { fix: String(fix) }, "repair:" + id)
     return true
   }
-  // ---- Restart, Shut Down, Sleep, Lock and Update. The console confirms those that can't be undone.
+  // ---- Restart, Shut Down, Sleep, Lock, Update (Omarchy's own update, in a window there) and
+  // Update ibara (ibara's signed release, with nobody at the computer). The console confirms those
+  // that can't be undone.
   // `apart`: the answer comes as powerAnswered, one message per computer (Update All), instead of
   // the console's one action message.
   signal powerAnswered(string computerId, string action, string text, bool failed)
   function power(computerId, action, apart) {
     var id = String(computerId || "")
-    if (!sessions[id] || ["restart", "shutdown", "sleep", "lock", "update"].indexOf(action) === -1 || busy["power:" + id]) return false
+    if (!sessions[id] || ["restart", "shutdown", "sleep", "lock", "update", "update_ibara"].indexOf(action) === -1 || busy["power:" + id]) return false
     var route = { action: action }
     if (apart === true) {
       route.apart = true
@@ -2712,14 +2714,14 @@ Item {
     updateAllRun = { waiting: waiting, last: updateAllRun.last }
     if (!waiting.length) sendLastUpdate()
   }
-  // ---- Update All: Update on each of these computers at once, and on `last` (this computer)
+  // ---- Update All: Update ibara on each of these computers at once, and on `last` (this computer)
   // once every other one has answered, so its own update can't cut the others off.
   // updateAllRun: null, or { waiting: [ids not answered yet], last }.
   property var updateAllRun: null
   function updateAll(ids, last) {
     if (updateAllRun) return false
     var sent = []
-    for (var i = 0; i < ids.length; i++) if (power(ids[i], "update", true)) sent.push(String(ids[i]))
+    for (var i = 0; i < ids.length; i++) if (power(ids[i], "update_ibara", true)) sent.push(String(ids[i]))
     updateAllRun = { waiting: sent, last: String(last || "") }
     if (!sent.length) sendLastUpdate()
     return true
@@ -2727,7 +2729,7 @@ Item {
   function sendLastUpdate() {
     var last = updateAllRun ? updateAllRun.last : ""
     updateAllRun = null
-    if (last) power(last, "update", true)
+    if (last) power(last, "update_ibara", true)
   }
   // ---- Wake: this computer, or another on the same network, sends the wake signal.
   function canWake(computerId) {
@@ -3113,8 +3115,11 @@ Item {
       loadAttention()
     } else if (op === "operator-power") {
       var name = computerLabelFor(id), s = sessions[id]
+      // An older ibara there doesn't know Update ibara yet: it needs one update by hand.
+      var older = !!error && route.action === "update_ibara" && error.code === "INVALID_ARGUMENT"
+      if (older) plain = name + " runs an older ibara. Update it once at that computer (ibara update), then Update All works."
       if (error) {
-        if (route.apart) powerSettled(id, route.action, name + " didn't update. " + (plain || "ibara couldn't reach it."), true)
+        if (route.apart) powerSettled(id, route.action, older ? plain : name + " didn't update. " + (plain || "ibara couldn't reach it."), true)
         else reportError(plain || "ibara couldn't do that on " + name + ".", id, error)
         return
       }
@@ -3123,6 +3128,7 @@ Item {
       else if (route.action === "shutdown") said = name + " is shutting down." + (s && s.wake ? " Choose Wake to turn it on again." : "")
       else if (route.action === "sleep") said = name + " is going to sleep. Choose Wake to wake it."
       else if (route.action === "lock") said = name + "'s screen is locked."
+      else if (route.action === "update_ibara") said = name + ": " + (StatusModel.clip(result.message, 200) || (result.state === "current" ? "ibara is already up to date." : "ibara is updating to the latest release. It may restart its bar when it finishes."))
       else said = name + " is updating. It may restart when it finishes."
       if (route.apart) powerSettled(id, route.action, said, false)
       else actionNotice = said

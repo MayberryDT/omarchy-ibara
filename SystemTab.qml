@@ -118,7 +118,15 @@ Item {
             onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "lock")
           }
           ActionButton {
-            label: "Update"
+            label: "Update ibara"
+            tooltipText: "Installs ibara's latest release on " + root.computerLabel + ". Nobody needs to be there."
+            blocked: root.actionReason !== ""
+            disabledReason: root.actionReason
+            onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "update_ibara")
+          }
+          ActionButton {
+            label: "Update Omarchy…"
+            tooltipText: "Omarchy's own update opens in a window on " + root.computerLabel + " and asks for its password there."
             blocked: root.actionReason !== ""
             disabledReason: root.actionReason
             onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "update")

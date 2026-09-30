@@ -391,7 +391,8 @@ function computerState(session) {
   var note = String(session.frame_error || "")
   if (connection === "unauthorized" || connection === "failed" || connection === "unverified" ||
       (session.trust_state !== undefined && session.trust_state !== "verified") || session.observation === "denied") return "attention"
-  if (session.locked === true && connection !== "offline") return "locked"
+  // Once a person holds control, the lock is theirs to type through: "You have control", not a problem.
+  if (session.locked === true && connection !== "offline" && String(session.owner_name || "").indexOf("operator:") !== 0) return "locked"
   if (ATTENTION_TASK_STATES.indexOf(String(task.state || "")) !== -1) return "attention"
   if (connection === "ready" && !session.frame && note && !ROUTINE_FRAME_NOTES.test(note)) return "attention"
   if (connection === "offline") return "offline"
@@ -476,6 +477,7 @@ function activityLine(session, nowMs) {
     return session.frame ? "No reply · last frame shown" : "No reply"
   }
   if (state === "locked") return "Screen locked · Take Control to unlock"
+  if (state === "human" && session.locked === true) return "Screen locked · type its password in the viewer"
   if (state === "connecting") return "Connecting…"
   if (state === "attention") {
     // Only what waits for your answer: the task, then what it waits for.
