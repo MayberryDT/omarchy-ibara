@@ -56,7 +56,7 @@ Panel {
     if (moreCount <= 0) return ""
     var shown = {}
     for (var i = 0; i < rows.length; i++) shown[String(rows[i].computer_id)] = true
-    var words = { attention: "needing attention", offline: "offline", connecting: "connecting", human: "in use", working: "working", paused: "paused", ready: "ready" }
+    var words = { attention: "needing attention", offline: "offline", locked: "locked", connecting: "connecting", human: "in use", working: "working", paused: "paused", ready: "ready" }
     var present = []
     for (var s = 0; s < tokens.stateOrder.length; s++) {
       var state = tokens.stateOrder[s]

@@ -43,17 +43,20 @@ Item {
   readonly property Tokens tokens: Tokens {}
   readonly property var computers: service && Array.isArray(service.computers) ? service.computers.filter(function(c) { return !!(c && c.computer_id) }) : []
   readonly property var favorites: host ? host.favorites : ({})
+  // Why Fleet Actions' Update All can't run now, or "". A string, so the menu's items change only
+  // when the answer does, not with every picture.
+  readonly property string updateAllBlocked: host ? host.updateAllPlan().blocked : "Connecting."
   readonly property var counts: {
     var c = service && service.fleetCounts ? service.fleetCounts : null
     if (c) return c
-    var result = { total: computers.length, attention: 0, offline: 0, connecting: 0, human: 0, working: 0, paused: 0, ready: 0 }
+    var result = { total: computers.length, attention: 0, offline: 0, locked: 0, connecting: 0, human: 0, working: 0, paused: 0, ready: 0 }
     for (var i = 0; i < computers.length; i++) {
       var state = tokens.stateOf(computers[i])
       if (result[state] !== undefined) result[state] += 1
     }
     return result
   }
-  readonly property int attentionCount: Number(counts.attention || 0) + Number(counts.offline || 0)
+  readonly property int attentionCount: Number(counts.attention || 0) + Number(counts.offline || 0) + Number(counts.locked || 0)
   readonly property int useCount: Number(counts.human || 0) + Number(counts.working || 0) + Number(counts.paused || 0)
   readonly property var visibleComputers: {
     var term = searchText.trim().toLocaleLowerCase()
@@ -107,6 +110,8 @@ Item {
     return null
   }
   function focusSearch() { search.focusInput() }
+  // T, V and H from the console act on the card with the keyboard (Console.handleKey).
+  function controlKey(control) { return !!grid.currentItem && grid.currentItem.pressControl(control) }
   function focusDefault() {
     if (visibleComputers.length) {
       if (grid.currentIndex < 0) grid.currentIndex = 0
@@ -332,9 +337,14 @@ Item {
         tooltipText: "Actions for every computer"
         items: [
           { id: "theme", label: root.service && root.service.busy["theme-fleet"] ? "Applying Theme…" : "Apply Theme to Fleet",
-            blocked: !!root.service && !!root.service.busy["theme-fleet"], reason: "ibara is applying it now." }
+            blocked: !!root.service && !!root.service.busy["theme-fleet"], reason: "ibara is applying it now." },
+          { id: "update", label: root.service && root.service.updateAllRun ? "Updating…" : "Update All…",
+            blocked: root.updateAllBlocked !== "", reason: root.updateAllBlocked }
         ]
-        onTriggered: id => { if (id === "theme" && root.service) root.service.applyThemeToFleet() }
+        onTriggered: id => {
+          if (id === "theme" && root.service) root.service.applyThemeToFleet()
+          else if (id === "update" && root.host) root.host.confirmUpdateAll(fleetActions.button)
+        }
       }
       ActionButton {
         glyph: "⚙"
@@ -483,6 +493,10 @@ Item {
         readonly property bool showActions: focused || hover.hovered || confirming || menuOpen
         readonly property string blockedReason: root.host ? root.host.controlBlockedReason(computer) : "Unavailable"
         readonly property bool holding: !!root.host && root.host.holds(computerId)
+        readonly property bool viewerOpen: holding && root.host.viewerOpen(computerId)
+        // T, V or H (Console.handleKey) on the card with the keyboard: its Take Control, Open or
+        // Close Viewer, or Hand Back, as if chosen there.
+        function pressControl(control) { return focused && !!actionsLoader.item && actionsLoader.item.press(control) }
         // The one thing this card offers without hovering: Fix It for a repair ibara couldn't
         // make, Resume for a person's pause, or Wake for a computer that is off or asleep.
         readonly property string standing: {
@@ -617,12 +631,12 @@ Item {
               computerId: cell.computerId
             }
             // Clicking the card opens the computer. Its standing action (Fix It, Resume or Wake)
-            // always shows; Take Control and More show on hover or keyboard focus. The grid
-            // remembers this loader as its focus, so Tab from the grid reaches the buttons and
-            // Shift+Tab returns.
+            // always shows, and so do Hand Back and Open Viewer while you hold control; Take
+            // Control and More show on hover or keyboard focus. The grid remembers this loader as
+            // its focus, so Tab from the grid reaches the buttons and Shift+Tab returns.
             Loader {
               id: actionsLoader
-              active: cell.showActions || cell.standing !== ""
+              active: cell.showActions || cell.standing !== "" || cell.holding
               anchors.left: parent.left
               anchors.bottom: dropBar.visible ? dropBar.top : parent.bottom
               anchors.margins: Style.space(8)
@@ -631,6 +645,13 @@ Item {
                 height: actionsRow.implicitHeight
                 radius: 0
                 color: Qt.alpha(Color.popups.background, 0.88)
+                function press(control) {
+                  var button = control === "take" ? takeControl : control === "viewer" ? viewerButton : control === "handback" ? handBack : null
+                  if (!button || !button.visible) return false
+                  button.forceActiveFocus()
+                  button.clicked()
+                  return true
+                }
                 Row {
                   id: actionsRow
                   spacing: Style.space(4)
@@ -655,19 +676,55 @@ Item {
                   }
                   ActionButton {
                     id: takeControl
-                    visible: cell.showActions && StatusModel.computerState(cell.computer) !== "offline"
-                    label: cell.holding ? "Open Viewer" : "Take Control"
+                    visible: !cell.holding && cell.showActions && StatusModel.computerState(cell.computer) !== "offline"
+                    label: "Take Control" + (cell.focused ? " (T)" : "")
                     role: cell.standing !== "" ? "secondary" : "primary"
                     size: "small"
-                    focus: true
+                    focus: !cell.holding
                     blocked: cell.blockedReason !== ""
                     disabledReason: cell.blockedReason
                     // Why it is unavailable is a toast when chosen, never a tooltip over the cards.
                     tooltipText: ""
+                    Accessible.name: "Take Control " + root.tokens.label(cell.computer)
                     onClicked: {
                       if (!root.host) return
                       if (blocked) root.host.notify(cell.blockedReason, false)
                       else root.host.takeControl(cell.computerId)
+                    }
+                  }
+                  // While you hold control: Open Viewer (Close Viewer while it is open), then Hand
+                  // Back in Take Control's place.
+                  ActionButton {
+                    id: viewerButton
+                    visible: cell.holding && (cell.viewerOpen || StatusModel.computerState(cell.computer) !== "offline")
+                    readonly property string word: cell.viewerOpen ? "Close Viewer" : "Open Viewer"
+                    label: word + (cell.focused ? " (V)" : "")
+                    size: "small"
+                    blocked: !cell.viewerOpen && cell.blockedReason !== ""
+                    disabledReason: blocked ? cell.blockedReason : ""
+                    tooltipText: ""
+                    Accessible.name: word + " " + root.tokens.label(cell.computer)
+                    onClicked: {
+                      if (!root.host) return
+                      if (blocked) root.host.notify(cell.blockedReason, false)
+                      else root.host.toggleViewer(cell.computerId)
+                    }
+                  }
+                  ActionButton {
+                    id: handBack
+                    visible: cell.holding
+                    label: "Hand Back" + (cell.focused ? " (H)" : "")
+                    role: cell.standing !== "" ? "secondary" : "primary"
+                    size: "small"
+                    focus: cell.holding
+                    blocked: !!(root.service && root.service.mutating)
+                    disabledReason: blocked ? "Wait for the current action to finish." : ""
+                    tooltipText: ""
+                    Accessible.name: "Hand Back " + root.tokens.label(cell.computer)
+                    onClicked: {
+                      if (!root.host) return
+                      if (blocked) root.host.notify(disabledReason, false)
+                      else root.host.handBack(cell.computerId)
                     }
                   }
                   ActionMenu {

@@ -7,6 +7,7 @@
 // IBARA_DEV_TRACE=1 writes each answered command (not operator reads or previews) to stderr.
 // IBARA_DEV_LIVE_VIDEO=1 starts with Live Video on. Every computer says it can stream, except
 // the control.json list video_incapable, and `video open` answers that it can't.
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -280,6 +281,7 @@ function observe(request, sequences, send) {
     if (!late && (listed('deny', computer) || (Array.isArray(now.deny) && now.deny.includes(computer)))) return write(refused(id, 'operator-observe', 'PERMISSION_DENIED: Observation not granted.'), 'denied');
     if (!late && listed('revoked', computer)) return write(refused(id, 'operator-observe', revokedMessage), 'revoked');
     if (!late && down(computer)) return write(refused(id, 'operator-observe', 'Selected operator transport closed.'), 'offline');
+    if (!late && lockedNow(computer)) return write(refused(id, 'operator-observe', 'HUMAN_CONTROL: The graphical session is locked.'), 'locked');
     const sequence = late ? 999999 : (sequences.get(computer) || 0) + 1;
     if (!late) sequences.set(computer, sequence);
     // Like ibarad: the picture is a private file under previews/, never base64 in the line.
@@ -426,6 +428,11 @@ function changeAccess(model, command, body) {
 //     N finished tasks instead, oldest first, as a busy agent computer has.
 //   control_error: {computer_id: "CODE: message"}: pause and resume there fail with that code.
 //   send_fails: [file names] whose send finds the same name already in the shared folder.
+//   locked: [ids] whose screen is locked: status says locked and pictures are refused
+//     (HUMAN_CONTROL) until 8 s after a person takes control there, as if they typed the password
+//     in the viewer.
+//   held: [fleet15 ids] this person holds control of from the start, as fleet15's Dune; Hand Back
+//     gives it back.
 // A restart takes a computer offline for 12 s; shut down and sleep until it is woken, and a
 // wake brings it back 8 s later.
 const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -438,6 +445,23 @@ const FIXES = {
 };
 const pauses = new Map();            // id → 'person' | null, once paused or resumed here
 const controls = new Set();          // fleet15 ids a person took control of here, until Hand Back
+if (fleet) FLEET.forEach((m, i) => { const id = 'fictional-' + String(i).padStart(2,'0'); if (m.you || listed('held', id)) controls.add(id); });
+const unlockAt = new Map();          // locked ids → when the person who took control unlocks them
+const lockedNow = id => listed('locked', id) && !(unlockAt.get(id) <= Date.now());
+// The viewer Take Control and Open Viewer open, as a stand-in: `sleep` copied beside the socket
+// as `ibara-view`, so the console sees a process by that name (no window) until Hand Back or
+// until you end it (`pkill -x ibara-view`) as a person closing the viewer would.
+const viewers = new Map();           // id → the stand-in viewer's pid
+function closeViewer(id) { const pid = viewers.get(id); viewers.delete(id); if (pid) try { process.kill(pid, 'SIGTERM'); } catch {} }
+function openViewer(id) {
+  closeViewer(id);
+  const bin = path.join(runtime, 'ibara-view');
+  if (!fs.existsSync(bin)) { fs.copyFileSync('/usr/bin/sleep', bin); fs.chmodSync(bin, 0o700); }
+  const child = spawn(bin, ['infinity'], {detached:true, stdio:'ignore'});
+  child.unref();
+  viewers.set(id, child.pid);
+  return child.pid;
+}
 const ownershipChanges = new Map();  // id → pause changes, for ownership_revision
 const fixed = new Set();             // ids whose needs_person Fix It cleared
 const lastRepair = new Map();        // id → {at, summary}
@@ -456,7 +480,7 @@ const poweredOff = id => (powerOff.get(id) || 0) > Date.now();
 // Nothing answers for it: the offline list, a power action, or fleet15's Onyx until woken.
 const down = id => listed('offline', id) || poweredOff(id) || (!!member(id)?.offline && !woken.has(id));
 const pauseOf = id => pauses.has(id) ? pauses.get(id) : listed('system_paused', id) ? 'system' : member(id)?.paused ? 'person' : null;
-const ownerOf = id => { const m = member(id); return controls.has(id) ? 'operator:riley' : pauseOf(id) ? 'human' : m?.you ? 'operator:riley' : m?.agent && !cancelledTasks.has(taskRefOf(id)) ? `agent:${m.agent}:${taskRefOf(id)}` : 'none'; };
+const ownerOf = id => { const m = member(id); return controls.has(id) ? 'operator:riley' : pauseOf(id) ? 'human' : m?.agent && !cancelledTasks.has(taskRefOf(id)) ? `agent:${m.agent}:${taskRefOf(id)}` : 'none'; };
 const ownershipRevision = (id, owner) => `${currentEpoch(id)}:${ownershipChanges.get(id) || 0}:${owner}`;
 function needsPerson(id) {
   const fix = String(control().needs_person?.[id] || ''), f = FIXES[fix];
@@ -696,6 +720,10 @@ function answer(request) {
   }
   if (!valid(id)) return respond(requestId, command, null);
   if (command === 'open-terminal') return respond(requestId, command, {opened:true});
+  if (command === 'open-viewer') {
+    if (!controls.has(id)) return fail('HUMAN_CONTROL', 'Choose Take Control first.');
+    return respond(requestId, command, {computer_id:id, viewer_started:true, viewer_pid:openViewer(id)});
+  }
   // A computer that is off answers nothing, from the first request on: no session, status or picture.
   if (down(id) && command.startsWith('operator-')) return refused(requestId, command, 'Selected operator transport failed.');
   if (listed('revoked', id) && command.startsWith('operator-')) return refused(requestId, command, revokedMessage);
@@ -710,7 +738,7 @@ function answer(request) {
     const activeTask = !denied && m?.task && !cancelledTasks.has(taskRefOf(id)) ? {task_ref:taskRefOf(id),title:m.task,principal:m.agent,state:m.state || 'active',started_at:ago(m.minutes),...liveStep(m)} : null;
     const displayCount = Number.isInteger(control().displays?.[id]) ? control().displays[id] : 1;
     const outputs = denied ? [] : Array.from({length:displayCount}, (_, n) => ({display_id:n ? `fictional-display-${n + 1}` : 'fictional-display',display_revision:'fictional-1',label:n ? `Fictional screen ${n + 1}` : 'Fictional screen'}));
-    return opReply(requestId, command, id, {observation:denied?'denied':'available_if_desktop_ready',active_task_ref:activeTask?activeTask.task_ref:null,active_task:activeTask,outputs,files:fleet?'available_if_root_approved':'denied',owner,ownership_revision:ownershipRevision(id, owner),interactive_control:fleet?'available_if_exclusive':'unsupported_without_verified_viewer_adapter',holds_control:!!m?.you || controls.has(id),
+    return opReply(requestId, command, id, {observation:denied?'denied':'available_if_desktop_ready',active_task_ref:activeTask?activeTask.task_ref:null,active_task:activeTask,outputs,files:fleet?'available_if_root_approved':'denied',owner,ownership_revision:ownershipRevision(id, owner),interactive_control:fleet?'available_if_exclusive':'unsupported_without_verified_viewer_adapter',holds_control:controls.has(id),locked:lockedNow(id),
       paused:!!pause,pause_origin:pause,system_wait:pause === 'system' ? (listed('resume_off', id) ? 'resume_off' : 'starting') : null,
       repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),
       video:listed('video_incapable', id) ? {capable:false,reason:"This computer can't stream video efficiently."} : {capable:true,reason:null}});
@@ -723,13 +751,16 @@ function answer(request) {
     const owner = ownerOf(id);
     return opReply(requestId, command, id, {paused:!!pauseOf(id), pause_origin:pauseOf(id), availability:'ready', owner, ownership_revision:ownershipRevision(id, owner)});
   }
-  // Take Control and Hand Back on fleet15: no viewer opens; the owner changes as on a real computer.
+  // Take Control and Hand Back on fleet15: the owner changes as on a real computer, and a stand-in
+  // viewer process opens (see openViewer); Hand Back ends it.
   if (controlOp) {
-    if (option('--op') === 'take_control') controls.add(id);
-    else controls.delete(id);
+    if (option('--op') === 'take_control') { controls.add(id); if (lockedNow(id) && !unlockAt.has(id)) unlockAt.set(id, Date.now() + 8000); }
+    else { controls.delete(id); closeViewer(id); }
     ownershipChanges.set(id, (ownershipChanges.get(id) || 0) + 1);
     const owner = ownerOf(id);
-    return opReply(requestId, command, id, {owner, ownership_revision:ownershipRevision(id, owner), viewer_ready:true, pause_origin:pauseOf(id)});
+    const reply = opReply(requestId, command, id, {owner, ownership_revision:ownershipRevision(id, owner), viewer_ready:true, pause_origin:pauseOf(id)});
+    if (option('--op') === 'take_control') Object.assign(reply.data, {viewer_started:true, viewer_pid:openViewer(id)});
+    return reply;
   }
   const task = ref => tasksOf(id).find(item => item.task_ref === ref);
   if (command === 'operator-tasks') return opReply(requestId, command, id, {tasks:tasksOf(id)});
@@ -830,6 +861,12 @@ const EVERYDAY_DELAY_MS = {'operator-power':800, 'operator-repair':2500, 'theme-
 function delayOf(command, args) {
   if ((command === 'settings' || command === 'operator-settings') && (args.includes('set') || args.includes('reset'))) return 150;
   if (SCOPED_READS.has(command)) return Number(control().scoped_delay_ms) || 0;
+  // Update All sends every computer's update at once: they answer one after another, as real
+  // computers starting their updates would.
+  if (command === 'operator-power' && args[args.indexOf('--action') + 1] === 'update') {
+    const id = args[args.indexOf('--computer') + 1] || '';
+    return 800 + (Number(id.slice(10)) || 0) * 350;
+  }
   return FIRST_RUN_DELAY_MS[command] || EVERYDAY_DELAY_MS[command] || 0;
 }
 
@@ -916,3 +953,4 @@ server.listen(socketPath, () => {
 const stop = () => { server.close(); try { fs.unlinkSync(socketPath); } catch {} process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
+process.on('exit', () => { for (const id of [...viewers.keys()]) closeViewer(id); });

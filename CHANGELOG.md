@@ -4,10 +4,14 @@ The plugin ships inside ibara's `ibara` package, and `ibara update` updates both
 
 ## Unreleased
 
+- Fleet Actions has Update All…: one confirmation names how many computers will update and which, and which can't and why (off, or still sending an earlier action). Every computer whose own Update is allowed starts updating, this computer last, once the others have answered; each one's answer is its own toast.
 - Fleet card hover: a top-row card rising under the pointer stays whole instead of sliding under the toolbar.
 - A computer that joins the fleet while the console is open arrives once, the first time its card is in view: "On your fleet", then its picture comes up from dark, and an accent ring holds on the card and fades.
 - Pairing by code: when the other computer accepts, Add Computer shows the match (the code panel turns the ready color, the code pops, a check, "Matched. NAME accepted.") before it goes to the fleet. On the computer being asked, Accept shows the same match on the request card instead of a separate toast.
 - Hand Back: the person ring opens outward past the picture's edge and fades, instead of vanishing.
+- While you hold control of a computer, Hand Back is the main action, in Take Control's place, with the viewer button before it: Open Viewer, or Close Viewer while the viewer is open. Close Viewer closes only the viewer; the computer stays yours. The button follows the viewer, so it reads Open Viewer again once you close the viewer window yourself. On the fleet card both always show, not only on hover.
+- Keys on the open computer or the fleet card with the keyboard: T for Take Control, V for Open Viewer or Close Viewer, H for Hand Back. The buttons show their key after their name there.
+- A computer whose screen is locked reads Locked, "Screen locked · Take Control to unlock", instead of Offline, and Take Control stays available: typing the password in the Viewer unlocks it.
 
 ## 0.2.0
 

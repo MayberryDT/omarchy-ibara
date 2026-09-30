@@ -26,7 +26,7 @@ QtObject {
   readonly property string fontFamily: Style.font.family
   // How long a matched pairing code shows on Add Computer before the console goes to the fleet.
   readonly property int matchMs: 1600
-  readonly property var stateOrder: ["attention", "offline", "human", "working", "paused", "ready", "connecting"]
+  readonly property var stateOrder: ["attention", "offline", "locked", "human", "working", "paused", "ready", "connecting"]
 
   // Page layout for the form pages and a computer's tabs: from `wideAt` wide, two columns
   // `columnGap` apart; narrower, one column at most `columnMax` wide, centered. A paragraph never
@@ -44,7 +44,7 @@ QtObject {
   }
   function stateColor(state) {
     if (state === "attention") return attentionColor
-    if (state === "offline" || state === "connecting") return offlineColor
+    if (state === "offline" || state === "locked" || state === "connecting") return offlineColor
     if (state === "human") return humanColor
     if (state === "working") return workingColor
     if (state === "paused") return pausedColor
@@ -61,7 +61,7 @@ QtObject {
   }
   // Needs attention, In use or Ready: the wall filters and the computer list groups.
   function groupOf(state) {
-    if (state === "attention" || state === "offline") return "attention"
+    if (state === "attention" || state === "offline" || state === "locked") return "attention"
     if (state === "human" || state === "working" || state === "paused") return "use"
     return "ready"
   }
@@ -69,7 +69,7 @@ QtObject {
     return group === "attention" ? "Needs attention" : group === "use" ? "In use" : "Ready"
   }
   // The fleet's counts in one parallel label form and a fixed order, in Title Case like the wall's
-  // filters: Needs Attention (offline included), In Use by You, In Use by Others (only while
+  // filters: Needs Attention (offline and locked included), In Use by You, In Use by Others (only while
   // someone on another computer holds one), In Use by Agents, Agents Paused, Ready for Work. A
   // computer still connecting is not counted.
   function fleetCountRows(computers) {
@@ -79,7 +79,7 @@ QtObject {
       if (!list[i]) continue
       var state = stateOf(list[i])
       if (state === "human") n[actor(list[i]) === "you" ? "you" : "others"] += 1
-      else if (state === "offline") n.attention += 1
+      else if (state === "offline" || state === "locked") n.attention += 1
       else if (n[state] !== undefined) n[state] += 1
     }
     var rows = [

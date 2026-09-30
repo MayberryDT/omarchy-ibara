@@ -17,8 +17,7 @@ Item {
   readonly property var health: service ? service.health || ({}) : ({})
   readonly property var healthLines: StatusModel.healthLines(health)
   readonly property bool offline: tokens.stateOf(computer) === "offline"
-  readonly property string powerBusy: service && service.busy["power:" + computerId] ? "on its way" : ""
-  readonly property string actionReason: !service ? "Connecting." : service.denied ? "You don't have access." : offline ? computerLabel + " isn't answering." : powerBusy ? "ibara is still sending the last one." : ""
+  readonly property string actionReason: host ? host.powerReason(computer) : "Connecting."
   readonly property var lastRepair: health.repair && health.repair.last && typeof health.repair.last === "object" ? health.repair.last : null
 
   function reload() {

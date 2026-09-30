@@ -1923,7 +1923,8 @@ Item {
           var updated = Object.assign({}, sessions)
           var capturedAt = StatusModel.isoMs(frame.capture_time)
           var age = Date.now() - capturedAt
-          updated[request.computer_id] = Object.assign({}, session, { frame: frame, frame_error: "", connection: "ready", capture_age_ms: isFinite(age) && age >= 0 ? age : null })
+          // A picture means the screen is unlocked: a locked one refuses pictures.
+          updated[request.computer_id] = Object.assign({}, session, { frame: frame, frame_error: "", connection: "ready", locked: false, capture_age_ms: isFinite(age) && age >= 0 ? age : null })
           publishSessions(updated)
           enforcePreviewMemory()
           if (previewBackoff[request.computer_id]) { var cleared = Object.assign({}, previewBackoff); delete cleared[request.computer_id]; previewBackoff = cleared }
@@ -1955,8 +1956,10 @@ Item {
     // ibara on this computer stopped, not the computer: it keeps its last picture and state.
     if (code === "DAEMON_UNAVAILABLE") return
     var offline = ["TIMEOUT", "OPERATOR_TRANSPORT_UNAVAILABLE"].indexOf(code) !== -1 || /^Selected operator transport (timed out|closed)/.test(message)
+    // A locked screen refuses pictures (HUMAN_CONTROL): the computer answers and is Locked, not refused.
+    var locked = /\bHUMAN_CONTROL\b/.test(code + " " + message) && /\blocked\b/i.test(message)
     var updated = Object.assign({}, sessions)
-    if (offline || /^(BUDGET_EXCEEDED|CAPABILITY_UNAVAILABLE|TIMEOUT)\b/.test(message)) {
+    if (offline || locked || /^(BUDGET_EXCEEDED|CAPABILITY_UNAVAILABLE|TIMEOUT)\b/.test(message)) {
       if (offline) {
         // Per-target jittered exponential backoff (3 s → 60 s) so unreachable computers cannot hold the lanes.
         var backoff = Object.assign({}, previewBackoff), prior = backoff[computerId]
@@ -1964,7 +1967,7 @@ Item {
         backoff[computerId] = { delay: delay, failed: Date.now(), until: Date.now() + Math.round(delay * (0.8 + Math.random() * 0.4)) }
         previewBackoff = backoff
       }
-      updated[computerId] = Object.assign({}, session, { connection: offline ? "offline" : session.connection, frame_error: StatusModel.clip(message, 200) })
+      updated[computerId] = Object.assign({}, session, { connection: offline ? "offline" : session.connection, locked: locked || session.locked === true, frame_error: locked ? "Screen locked · Take Control to unlock" : StatusModel.clip(message, 200) })
     } else {
       var epochChanged = targetEpochChanged(error)
       invalidateTargetPreviews(computerId)
@@ -2042,6 +2045,60 @@ Item {
     var epoch = sessions[String(computerId)] && sessions[String(computerId)].controller_epoch
     startHelper("open-viewer", ["open-viewer", "--computer", String(computerId)].concat(epoch ? ["--epoch", String(epoch)] : []))
     return true
+  }
+  // The viewer this console opened for each computer (computer → pid, from the Take Control and
+  // Open Viewer answers), kept while that process runs, so the console offers Open Viewer or
+  // Close Viewer as it really is, also after the person closes the viewer window themselves.
+  property var viewers: ({})
+  function viewerOpenOn(computerId) { return !!viewers[String(computerId || "")] }
+  function noteViewer(computerId, pid) {
+    var id = String(computerId || ""), next = Object.assign({}, viewers)
+    pid = Number(pid)
+    if (id && Number.isInteger(pid) && pid > 0) next[id] = pid
+    else delete next[id]
+    if (!sameValue(viewers, next)) viewers = next
+  }
+  // Close Viewer closes only the viewer: the computer stays yours and paused until Hand Back.
+  function closeViewerFor(computerId) {
+    var id = String(computerId || ""), pid = viewers[id]
+    if (!pid) return false
+    var closer = oneShotComponent.createObject(root)
+    closer.command = ["sh", "-c", "case \"$(cat /proc/$1/comm 2>/dev/null)\" in ibara-view|moonlight) kill -TERM \"$1\";; esac", "sh", String(pid)]
+    closer.running = true
+    noteViewer(id, 0)
+    actionNotice = "Viewer closed. " + computerLabelFor(id) + " stays yours and paused until you choose Hand Back."
+    return true
+  }
+  // Every 1.5 s while a viewer is open: which of them still run (ibara-view, or Moonlight for an
+  // older computer, checked by name so a reused process id never counts).
+  Timer {
+    interval: 1500
+    repeat: true
+    running: Object.keys(root.viewers).length > 0
+    onTriggered: {
+      if (viewerCheck.running) return
+      var pids = []
+      for (var id in root.viewers) pids.push(root.viewers[id])
+      viewerCheck.checked = pids
+      viewerCheck.command = ["sh", "-c", "for p; do case \"$(cat /proc/$p/comm 2>/dev/null)\" in ibara-view|moonlight) echo \"$p\";; esac; done", "sh"].concat(pids.map(String))
+      viewerCheck.running = true
+    }
+  }
+  Process {
+    id: viewerCheck
+    property var checked: []
+    // Only a viewer that was checked and has gone is dropped: one opened meanwhile stays.
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var alive = String(text || "").split("\n").map(Number), next = ({})
+        for (var id in root.viewers) {
+          var pid = root.viewers[id]
+          if (viewerCheck.checked.indexOf(pid) === -1 || alive.indexOf(pid) !== -1) next[id] = pid
+        }
+        if (!root.sameValue(root.viewers, next)) root.viewers = next
+      }
+    }
   }
   // A terminal on this desktop, signed in to the computer over Tailscale.
   function openTerminalFor(computerId) {
@@ -2634,11 +2691,43 @@ Item {
     return true
   }
   // ---- Restart, Shut Down, Sleep, Lock and Update. The console confirms those that can't be undone.
-  function power(computerId, action) {
+  // `apart`: the answer comes as powerAnswered, one message per computer (Update All), instead of
+  // the console's one action message.
+  signal powerAnswered(string computerId, string action, string text, bool failed)
+  function power(computerId, action, apart) {
     var id = String(computerId || "")
     if (!sessions[id] || ["restart", "shutdown", "sleep", "lock", "update"].indexOf(action) === -1 || busy["power:" + id]) return false
-    sendToComputer("operator-power", id, ["--action", action], { action: action }, "power:" + id)
+    var route = { action: action }
+    if (apart === true) {
+      route.apart = true
+      route.failed = function(message) { root.powerSettled(id, action, root.computerLabelFor(id) + " didn't update. " + message, true) }
+    }
+    sendToComputer("operator-power", id, ["--action", action], route, "power:" + id)
     return true
+  }
+  function powerSettled(id, action, text, failed) {
+    powerAnswered(id, action, text, failed)
+    if (!updateAllRun) return
+    var waiting = updateAllRun.waiting.filter(function(other) { return other !== id })
+    updateAllRun = { waiting: waiting, last: updateAllRun.last }
+    if (!waiting.length) sendLastUpdate()
+  }
+  // ---- Update All: Update on each of these computers at once, and on `last` (this computer)
+  // once every other one has answered, so its own update can't cut the others off.
+  // updateAllRun: null, or { waiting: [ids not answered yet], last }.
+  property var updateAllRun: null
+  function updateAll(ids, last) {
+    if (updateAllRun) return false
+    var sent = []
+    for (var i = 0; i < ids.length; i++) if (power(ids[i], "update", true)) sent.push(String(ids[i]))
+    updateAllRun = { waiting: sent, last: String(last || "") }
+    if (!sent.length) sendLastUpdate()
+    return true
+  }
+  function sendLastUpdate() {
+    var last = updateAllRun ? updateAllRun.last : ""
+    updateAllRun = null
+    if (last) power(last, "update", true)
   }
   // ---- Wake: this computer, or another on the same network, sends the wake signal.
   function canWake(computerId) {
@@ -3023,13 +3112,20 @@ Item {
       recheckComputer(id)
       loadAttention()
     } else if (op === "operator-power") {
-      if (error) { reportError(plain || "ibara couldn't do that on " + computerLabelFor(id) + ".", id, error); return }
       var name = computerLabelFor(id), s = sessions[id]
-      if (route.action === "restart") actionNotice = name + " is restarting." + (result.disk_password_warning === true ? " Its disk asks for its password when it starts, so someone there must type it before ibara can reach it again." : " ibara reconnects when it's back.")
-      else if (route.action === "shutdown") actionNotice = name + " is shutting down." + (s && s.wake ? " Choose Wake to turn it on again." : "")
-      else if (route.action === "sleep") actionNotice = name + " is going to sleep. Choose Wake to wake it."
-      else if (route.action === "lock") actionNotice = name + "'s screen is locked."
-      else actionNotice = name + " is updating. It may restart when it finishes."
+      if (error) {
+        if (route.apart) powerSettled(id, route.action, name + " didn't update. " + (plain || "ibara couldn't reach it."), true)
+        else reportError(plain || "ibara couldn't do that on " + name + ".", id, error)
+        return
+      }
+      var said
+      if (route.action === "restart") said = name + " is restarting." + (result.disk_password_warning === true ? " Its disk asks for its password when it starts, so someone there must type it before ibara can reach it again." : " ibara reconnects when it's back.")
+      else if (route.action === "shutdown") said = name + " is shutting down." + (s && s.wake ? " Choose Wake to turn it on again." : "")
+      else if (route.action === "sleep") said = name + " is going to sleep. Choose Wake to wake it."
+      else if (route.action === "lock") said = name + "'s screen is locked."
+      else said = name + " is updating. It may restart when it finishes."
+      if (route.apart) powerSettled(id, route.action, said, false)
+      else actionNotice = said
       // It stops answering now; the card says why, and dims, until it answers again.
       if (["restart", "shutdown", "sleep"].indexOf(route.action) !== -1) updateSession(id, { power_state: route.action, connection: "offline" })
     } else if (op === "wake") {
@@ -3332,6 +3428,8 @@ Item {
             needs_person: StatusModel.needsPersonView(authenticated.repair && authenticated.repair.needs_person),
             wake: authenticated.wake !== undefined ? StatusModel.wakeView(authenticated.wake) : identity.wake || null,
             power_state: "",
+            // Its screen is locked: agents can't use it until a person unlocks it with Take Control.
+            locked: authenticated.locked === true,
             disk_password: authenticated.disk_password !== undefined ? authenticated.disk_password === true : identity.disk_password === true,
             video: StatusModel.videoView(authenticated.video)
           })
@@ -3583,6 +3681,8 @@ Item {
           holds_control_epoch: control.controller_epoch
         })
         publishSessions(refreshed)
+        // The viewer Take Control opened; Hand Back closes it.
+        noteViewer(control.computer_id, kind === "operator-take-control" && proof.viewer_started === true ? proof.viewer_pid : 0)
         // Hand Back lets agents work again (owner "none") unless someone paused them: a person
         // (before or while holding control), or ibara while it settles the computer.
         actionNotice = kind === "operator-take-control" ?
@@ -3594,6 +3694,7 @@ Item {
       }
       actionError = ""
       actionNotice = ""
+      if (kind === "open-viewer" && parsed.data && parsed.data.viewer_started === true) noteViewer(parsed.data.computer_id, parsed.data.viewer_pid)
       if (kind === "open-viewer") actionNotice = "Viewer opened. Closing it does not hand back."
       if (kind === "open-terminal") actionNotice = "A terminal opened, signed in to that computer."
       if (kind === "rename-computer" && parsed.data && parsed.data.computer) {

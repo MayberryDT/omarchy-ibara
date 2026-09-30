@@ -362,11 +362,13 @@ function listOf(value, key) {
   return []
 }
 
-// Fleet state for one computer. Precedence: attention > offline > human > working > paused > ready.
+// Fleet state for one computer. Precedence: attention > locked > offline > human > working > paused > ready.
 // Owner names come from the controller: operator:<id>, agent:<principal>:<task_ref>, human (agents
 // paused with nobody holding the viewer) or none. A computer whose self-repair needs a person
 // (repair.needs_person) needs attention, and so does one where an agent waits for your approval
 // or your answer (`waiting`, from fleet-attention), unless it is offline: an answer can't reach it.
+// A computer that answers with its screen locked (`locked`) is "locked": agents can't use it and
+// Take Control is how a person unlocks it.
 var ATTENTION_TASK_STATES = ["waiting_for_human", "interrupted", "blocked"]
 // Preview notes that are routine while a frame is on its way; any other note without a frame needs a look.
 var ROUTINE_FRAME_NOTES = /^(Preview pending|Preview unavailable|Waiting for an authorized preview\.|Not previewed: |Preview released |Controller restarted|This computer has no display yet\.|ibara dropped a picture |BUDGET_EXCEEDED\b)/
@@ -389,6 +391,7 @@ function computerState(session) {
   var note = String(session.frame_error || "")
   if (connection === "unauthorized" || connection === "failed" || connection === "unverified" ||
       (session.trust_state !== undefined && session.trust_state !== "verified") || session.observation === "denied") return "attention"
+  if (session.locked === true && connection !== "offline") return "locked"
   if (ATTENTION_TASK_STATES.indexOf(String(task.state || "")) !== -1) return "attention"
   if (connection === "ready" && !session.frame && note && !ROUTINE_FRAME_NOTES.test(note)) return "attention"
   if (connection === "offline") return "offline"
@@ -414,7 +417,7 @@ function pauseAction(session) {
 }
 
 function fleetStateLabel(state) {
-  return ({ attention: "Needs Attention", offline: "Offline", connecting: "Connecting", human: "You have control", working: "Agent working", paused: "Paused", ready: "Ready" })[state] || "Offline"
+  return ({ attention: "Needs Attention", offline: "Offline", locked: "Locked", connecting: "Connecting", human: "You have control", working: "Agent working", paused: "Paused", ready: "Ready" })[state] || "Offline"
 }
 
 function fleetActor(session) {
@@ -429,14 +432,14 @@ function fleetActor(session) {
 }
 
 function fleetCounts(computers) {
-  var counts = { total: 0, attention: 0, offline: 0, connecting: 0, human: 0, working: 0, paused: 0, ready: 0 }
+  var counts = { total: 0, attention: 0, offline: 0, locked: 0, connecting: 0, human: 0, working: 0, paused: 0, ready: 0 }
   var list = Array.isArray(computers) ? computers : []
   for (var i = 0; i < list.length; i++) {
     if (!list[i]) continue
     counts.total += 1
     counts[fleetState(list[i])] += 1
   }
-  counts.needs_attention = counts.attention + counts.offline
+  counts.needs_attention = counts.attention + counts.offline + counts.locked
   counts.in_use = counts.human + counts.working + counts.paused
   return counts
 }
@@ -472,6 +475,7 @@ function activityLine(session, nowMs) {
     if (power) return power
     return session.frame ? "No reply · last frame shown" : "No reply"
   }
+  if (state === "locked") return "Screen locked · Take Control to unlock"
   if (state === "connecting") return "Connecting…"
   if (state === "attention") {
     // Only what waits for your answer: the task, then what it waits for.
@@ -860,20 +864,20 @@ function needsYouView(items, computers, hidden) {
   return out
 }
 
-// When each computer that is offline or needs attention became so: `since` from before, kept
-// while the problem lasts (offline then needing attention is one problem), dropped once it ends.
+// When each computer that is offline, locked or needs attention became so: `since` from before,
+// kept while the problem lasts (offline then needing attention is one problem), dropped once it ends.
 function problemSince(computers, since, nowMs) {
   var before = since && typeof since === "object" ? since : {}, out = {}
   var rows = Array.isArray(computers) ? computers : []
   for (var i = 0; i < rows.length; i++) {
     var c = asObject(rows[i]), id = String(c.computer_id || ""), state = computerState(c)
-    if (id && (state === "offline" || state === "attention")) out[id] = before[id] || nowMs
+    if (id && (state === "offline" || state === "locked" || state === "attention")) out[id] = before[id] || nowMs
   }
   return out
 }
 
-// What the toast says about a computer that is offline or needs attention: what is wrong, then
-// what to do. `wake`: whether ibara can wake it.
+// What the toast says about a computer that is offline, locked or needs attention: what is wrong,
+// then what to do. `wake`: whether ibara can wake it.
 function problemWords(session, label) {
   session = asObject(session)
   var name = String(label || "This computer"), wake = !!session.wake
@@ -884,6 +888,8 @@ function problemWords(session, label) {
       : "Check that it's on and online" + (wake ? ", or choose Wake" : "") + ". ibara keeps trying and clears this once it answers."
     return { heading: heading, body: body, wake: wake }
   }
+  if (computerState(session) === "locked")
+    return { heading: name + "'s screen is locked", body: "Its agents can't use it until it's unlocked. Choose Take Control on its card to unlock it.", wake: false }
   var connection = String(session.connection || ""), task = asObject(session.active_task)
   var why
   if (session.trust_state !== undefined && session.trust_state !== "verified") why = "It isn't paired with this computer anymore. Pair it again from Add Computer."
@@ -897,7 +903,7 @@ function problemWords(session, label) {
   return { heading: name + " needs attention", body: why, wake: false }
 }
 
-// The computers offline or needing attention for PROBLEM_AFTER_MS or longer, oldest first, each
+// The computers offline, locked or needing attention for PROBLEM_AFTER_MS or longer, oldest first, each
 // with its words. One that needs a person has its own toast (needsYouView) and is left out;
 // `hidden` maps a computer to the signature put away there (it shows again once that changes).
 // → [{ computer_id, label, state, heading, body, wake, signature, since }]
@@ -906,7 +912,7 @@ function lastingProblems(computers, since, nowMs, hidden) {
   var rows = Array.isArray(computers) ? computers : []
   for (var i = 0; i < rows.length; i++) {
     var c = asObject(rows[i]), id = String(c.computer_id || ""), state = computerState(c)
-    if (!id || (state !== "offline" && state !== "attention") || !began[id] || nowMs - began[id] < PROBLEM_AFTER_MS) continue
+    if (!id || (state !== "offline" && state !== "locked" && state !== "attention") || !began[id] || nowMs - began[id] < PROBLEM_AFTER_MS) continue
     if (asObject(c.needs_person).message && state !== "offline") continue
     var words = problemWords(c, clip(c.label, 128) || id)
     var signature = state + "|" + words.heading + "|" + words.body

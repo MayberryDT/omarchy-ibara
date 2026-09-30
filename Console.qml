@@ -404,6 +404,7 @@ Panel {
     function onActionErrorChanged() { root.syncActionError() }
     function onDeniedChanged() { root.syncActionError() }
     function onActionNoticeChanged() { root.syncActionNotice() }
+    function onPowerAnswered(computerId, action, text, failed) { root.showToast("power:" + computerId, text, failed) }
     function onAgentAllowed(computerId, text) { root.offerAction("allowed", text, "Open Access", function() { root.showComputer(computerId, "access") }) }
     function onLastErrorChanged() { root.syncRefresh() }
     function onActionErrorFixChanged() { root.syncActionError() }
@@ -532,6 +533,14 @@ Panel {
     if (!holds(id) || !service || service.mutating) return
     service.handBackFor(id)
   }
+  // While you hold control the viewer button follows the viewer: Open Viewer, or Close Viewer
+  // while the one this console opened still runs. Closing it never hands back.
+  function viewerOpen(id) { return !!service && typeof service.viewerOpenOn === "function" && service.viewerOpenOn(id) }
+  function toggleViewer(id) {
+    if (!holds(id) || !service) return
+    if (viewerOpen(id)) service.closeViewerFor(id)
+    else takeControl(id)
+  }
   // Restart, Shut Down, Sleep, Lock Screen and Update can't be undone from here, so each asks
   // first, beside the control that asked, and says what happens next.
   function confirmPower(id, action, anchor) {
@@ -556,6 +565,58 @@ Panel {
       valid: function() { return !!root.computerById(id) }
     })
   }
+  // Why Restart, Shut Down, Sleep, Lock Screen and Update can't run on a computer now, or "" when
+  // they can. The System tab's buttons and Update All both ask here.
+  function powerReason(c) {
+    if (!service) return "Connecting."
+    if (service.denied) return "You don't have access."
+    if (tokens.stateOf(c) === "offline") return tokens.label(c) + " isn't answering."
+    if (service.busy["power:" + String(c.computer_id)]) return "ibara is still sending " + tokens.label(c) + " the last one."
+    return ""
+  }
+  function shortList(names, most) {
+    var shown = names.length > most ? names.slice(0, most - 1).concat([(names.length - most + 1) + " more"]) : names
+    return shown.length < 2 ? shown.join("") : shown.slice(0, -1).join(", ") + " and " + shown[shown.length - 1]
+  }
+  // Update All (Fleet Actions): each computer whose own Update is allowed now, this computer
+  // last; the rest are said with why. blocked: why none can update, or "".
+  function updateAllPlan() {
+    var ready = [], skipped = [], self = null, selfId = service ? String(service.thisComputerId || "") : ""
+    for (var i = 0; i < computers.length; i++) {
+      var c = computers[i]
+      if (!c || !c.computer_id) continue
+      var why = powerReason(c)
+      if (why) skipped.push(why.replace(/\.$/, ""))
+      else if (String(c.computer_id) === selfId) self = c
+      else ready.push(c)
+    }
+    if (self) ready.push(self)
+    var blocked = !service ? "Connecting." : service.denied ? "You don't have access." : service.updateAllRun ? "ibara is sending the updates now."
+      : !ready.length ? (skipped.length ? "None can update now: " + shortList(skipped, 3) + "." : "No computers to update.") : ""
+    return { ready: ready, skipped: skipped, selfId: self ? selfId : "", blocked: blocked }
+  }
+  function confirmUpdateAll(anchor) {
+    var plan = updateAllPlan()
+    if (plan.blocked) return
+    var ids = plan.ready.map(function(c) { return String(c.computer_id) })
+    var names = plan.ready.map(function(c) { return String(c.computer_id) === plan.selfId ? "this computer" : tokens.label(c) })
+    var count = ids.length
+    askConfirm({
+      anchor: anchor,
+      message: "Update " + (count === 1 ? names[0] : count + " computers: " + shortList(names, 5)) + "? " +
+        (count === 1 ? "It" : "Each") + " may restart when its update finishes." + (plan.selfId && count > 1 ? " This computer goes last." : "") +
+        (plan.skipped.length ? " " + plan.skipped.length + " can't: " + shortList(plan.skipped, 3) + "." : ""),
+      confirmLabel: count === 1 ? "Update" : "Update " + count,
+      run: function() {
+        root.service.updateAll(ids.filter(function(id) { return id !== plan.selfId }), plan.selfId)
+      },
+      valid: function() {
+        var now = root.updateAllPlan()
+        return !now.blocked && now.ready.map(function(c) { return String(c.computer_id) }).join("\n") === ids.join("\n")
+      },
+      staleMessage: "Nothing was updated: which computers can update changed while you were confirming. Choose Update All again to see them."
+    })
+  }
 
   // Remove Computer takes a computer out of this fleet (after a reinstall, say); Add Computer adds
   // it again with the same checks as the first time.
@@ -574,7 +635,8 @@ Panel {
   }
 
   // ---- keyboard: Escape backs out, F5 refreshes, / finds, Ctrl+, opens Settings, F6 moves between
-  // the page and its toasts. Tab and arrows follow focus.
+  // the page and its toasts, and T, V and H act on the open computer or the focused card (Take
+  // Control, Open or Close Viewer, Hand Back). Tab and arrows follow focus.
   function textFocused() {
     var item = root.focusedItem
     return !!item && (item.cursorPosition !== undefined && item.selectByMouse !== undefined)
@@ -609,7 +671,12 @@ Panel {
     if (event.key === Qt.Key_Slash && !textFocused() && activeRoute && typeof activeRoute.focusSearch === "function") {
       activeRoute.focusSearch()
       event.accepted = true
+      return
     }
+    var control = event.key === Qt.Key_T ? "take" : event.key === Qt.Key_V ? "viewer" : event.key === Qt.Key_H ? "handback" : ""
+    if (control && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) && !textFocused() && !confirmation &&
+        activeRoute && typeof activeRoute.controlKey === "function" && activeRoute.controlKey(control))
+      event.accepted = true
   }
 
   // A route's page is built the first time it is shown in this opening and kept until the

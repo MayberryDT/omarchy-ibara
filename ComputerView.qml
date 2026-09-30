@@ -22,6 +22,17 @@ Item {
   readonly property string fleetState: tokens.stateOf(computer)
   readonly property string computerLabel: tokens.label(computer)
   readonly property bool holding: !!host && !!computerId && host.holds(computerId)
+  readonly property bool viewerOpen: holding && host.viewerOpen(computerId)
+  // T, V and H from the console (Console.handleKey): the header's Take Control, Open or Close
+  // Viewer and Hand Back, each with its key after its name. The button takes the keyboard, so a
+  // confirmation attaches to it.
+  function controlKey(control) {
+    var button = control === "take" ? takeControlButton : control === "viewer" ? viewerButton : control === "handback" ? handBackButton : null
+    if (!button || !button.visible) return false
+    button.forceActiveFocus()
+    button.clicked()
+    return true
+  }
   // Renaming turns the title into a field: Enter saves, Escape cancels. The name is this
   // machine's own label for the computer; the computer itself is unchanged.
   property bool renaming: false
@@ -275,8 +286,9 @@ Item {
         wrapMode: Text.NoWrap
         elide: Text.ElideRight
       }
-      // Secondary actions, then the one primary action last: Take Control, or Open Viewer while
-      // you hold control. Close stays apart, past a rule, so it is never read as one of them.
+      // Secondary actions, then the one primary action last: Take Control, or, while you hold
+      // control, Open Viewer then Hand Back in its place. Close stays apart, past a rule, so it is
+      // never read as one of them.
       Row {
         id: headActions
         anchors.right: closeRule.left
@@ -309,23 +321,48 @@ Item {
           onClicked: if (root.host) root.host.setTab("files")
         }
         ActionButton {
-          visible: root.holding
-          label: "Hand Back"
-          blocked: !!(root.service && root.service.mutating)
-          disabledReason: blocked ? "Wait for the current action to finish." : ""
-          onClicked: if (!blocked && root.host) root.host.handBack(root.computerId)
-        }
-        ActionButton {
-          label: root.holding ? "Open Viewer" : "Take Control"
+          id: takeControlButton
+          visible: !root.holding
+          label: "Take Control (T)"
           role: "primary"
           blocked: root.controlReason !== ""
           disabledReason: root.controlReason
           // Why it is unavailable is a toast when chosen, never a long tooltip over the page.
           tooltipText: ""
+          Accessible.name: "Take Control"
           onClicked: {
             if (!root.host) return
             if (blocked) root.host.notify(root.controlReason, false)
             else root.host.takeControl(root.computerId)
+          }
+        }
+        ActionButton {
+          id: viewerButton
+          visible: root.holding
+          label: (root.viewerOpen ? "Close Viewer" : "Open Viewer") + " (V)"
+          blocked: !root.viewerOpen && root.controlReason !== ""
+          disabledReason: blocked ? root.controlReason : ""
+          tooltipText: root.viewerOpen ? "Close the viewer; " + root.computerLabel + " stays yours until Hand Back" : ""
+          Accessible.name: root.viewerOpen ? "Close Viewer" : "Open Viewer"
+          onClicked: {
+            if (!root.host) return
+            if (blocked) root.host.notify(root.controlReason, false)
+            else root.host.toggleViewer(root.computerId)
+          }
+        }
+        ActionButton {
+          id: handBackButton
+          visible: root.holding
+          label: "Hand Back (H)"
+          role: "primary"
+          blocked: !!(root.service && root.service.mutating)
+          disabledReason: blocked ? "Wait for the current action to finish." : ""
+          tooltipText: ""
+          Accessible.name: "Hand Back"
+          onClicked: {
+            if (!root.host) return
+            if (blocked) root.host.notify(disabledReason, false)
+            else root.host.handBack(root.computerId)
           }
         }
       }

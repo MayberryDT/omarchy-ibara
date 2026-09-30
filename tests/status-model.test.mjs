@@ -243,9 +243,9 @@ test('who can use it lists paired identities, you first, with each permission in
   assert.equal(M.peopleAndAgents([]), '');
 });
 
-test('fleet counts group attention with offline and people with agents', () => {
-  const counts = M.fleetCounts([live({ connection: 'offline' }), live({ connection: 'unauthorized' }), live({ owner_name: 'operator:me', holds_control: true }), live({ owner_name: 'agent:a:t' }), live({ owner_name: 'human' }), live(), null]);
-  assert.deepEqual({ ...counts }, { total: 6, attention: 1, offline: 1, connecting: 0, human: 1, working: 1, paused: 1, ready: 1, needs_attention: 2, in_use: 3 });
+test('fleet counts group attention with offline and locked, and people with agents', () => {
+  const counts = M.fleetCounts([live({ connection: 'offline' }), live({ connection: 'unauthorized' }), live({ locked: true }), live({ owner_name: 'operator:me', holds_control: true }), live({ owner_name: 'agent:a:t' }), live({ owner_name: 'human' }), live(), null]);
+  assert.deepEqual({ ...counts }, { total: 7, attention: 1, offline: 1, locked: 1, connecting: 0, human: 1, working: 1, paused: 1, ready: 1, needs_attention: 3, in_use: 3 });
 });
 
 // An approval or a question waiting on a computer. Failure cases:
