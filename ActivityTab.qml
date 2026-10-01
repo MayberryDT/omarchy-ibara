@@ -40,65 +40,77 @@ Item {
     service.loadTasks()
     service.loadProcedures()
     service.loadArtifacts()
+    if (detailKind === "task" && service.selectedTaskRef && !service.readPending("task")) service.inspectTask(service.selectedTaskRef)
   }
   onVisibleChanged: reload()
   onComputerIdChanged: { detailKind = "task"; showTechnicalDetail = false; reload() }
 
-  // ---- task wording (unchanged meaning from the single-computer console)
-  function taskState(task) {
-    task = task || ({})
-    if (task.live || task.state === "active" || task.state === "running") return "In progress"
-    if (task.state === "completed" || task.completion_outcome === "complete" || task.completion_outcome === "completed") return "Finished"
-    return tokens.sentence(task.state || task.completion_outcome) || "Unknown"
+  Timer {
+    interval: root.service ? root.service.openRefreshMs : 5000
+    repeat: true
+    running: root.visible && root.detailKind === "task" && !!root.service && !!root.service.selectedTaskRef && StatusModel.taskLive(root.selectedTaskRecord)
+    onTriggered: if (!root.service.readPending("task")) root.service.inspectTask(root.service.selectedTaskRef)
   }
-  function taskStateColor(task) {
-    var state = taskState(task)
-    return state === "In progress" ? tokens.workingColor : state === "Finished" ? tokens.readyColor : tokens.pausedColor
+
+  // Wording lives in StatusModel; this surface owns colors and open folds.
+  function taskStateColor(task) { return tokens.stateColor(StatusModel.taskTone(task)) }
+  function stepColor(step) {
+    return step.tone === "attention" ? tokens.attentionColor : step.tone === "paused" ? tokens.pausedColor
+      : step.kind === "task" ? tokens.humanColor : step.kind === "exec" ? tokens.workingColor : tokens.accent
   }
-  function taskProjection(item) {
-    item = item || ({})
-    var task = item.task || item
-    return item.completion_projection || task.completion_projection || task.verification || ({})
+  property var openFolds: ({})
+  property bool summaryOpen: false
+  property bool timelineReady: false
+  property string lastNewestStepKey: ""
+  ListModel { id: timelineModel }
+  readonly property string foldTaskRef: computerId + ":" + (service ? service.selectedTaskRef : "")
+  onFoldTaskRefChanged: {
+    openFolds = ({}); summaryOpen = false; lastNewestStepKey = ""
+    if (timelineReady) { timelineModel.clear(); detailScroll.contentY = 0 }
   }
-  // Whether ibara checked that the task did what it said, in plain words.
-  function taskProof(item) {
-    var task = (item || {}).task || item || {}
-    var proof = taskProjection(item)
-    if (proof.verified_complete === true) return "ibara checked the result"
-    if (!Object.keys(proof).length) return task.live ? "ibara hasn't checked the result yet" : "ibara didn't check the result"
-    return "ibara couldn't confirm the result"
+  function foldOpen(group) { return group.items.some(function(s) { return !!root.openFolds[s.key] }) }
+  function toggleFold(group) {
+    var next = Object.assign({}, openFolds)
+    var opened = !foldOpen(group)
+    group.items.forEach(function(s) { next[s.key] = opened })
+    openFolds = next
   }
-  // The agent the way the fleet names it: "agent from relay".
-  function taskAgent(task) { return task && task.principal ? "agent from " + String(task.principal) : "" }
-  function taskReceipts(item) { return StatusModel.listOf(item || ({}), "receipts") }
-  function taskWarning(item) {
-    var proof = taskProjection(item)
-    if (Array.isArray(proof.unresolved_request_refs) && proof.unresolved_request_refs.length) return "Some steps may not have finished. See What it did below before running them again."
-    var receipts = taskReceipts(item)
-    for (var i = 0; i < receipts.length; i++)
-      if (receipts[i].dependency_state === "unresolved" || receipts[i].requires_reconciliation || receipts[i].execution === "unknown" || receipts[i].effect === "unknown") return "Some steps may not have finished. See What it did below before running them again."
-    return ""
-  }
-  function taskCriteria(item) {
-    var projection = taskProjection(item)
-    return Array.isArray(item && item.criteria) ? item.criteria : Array.isArray(projection.criteria) ? projection.criteria : []
-  }
-  function taskDeliveries(item) {
-    var projection = taskProjection(item)
-    return Array.isArray(item && item.deliveries) ? item.deliveries : Array.isArray(projection.deliveries) ? projection.deliveries : []
-  }
-  function taskReceiptState(item) {
-    if (!item) return "Outcome unknown"
-    if (item.dependency_state === "unresolved" || item.requires_reconciliation || item.execution === "unknown" || item.effect === "unknown") return "Needs review · do not repeat"
-    if (item.error) return "Failed · " + StatusModel.clip(item.error, 140)
-    return "Effect " + (tokens.sentence(item.effect).toLowerCase() || "unknown") + " · verification " + (tokens.sentence(item.verification).toLowerCase() || "unknown")
-  }
-  function taskCleanup(item) {
-    var proof = taskProjection(item)
-    if (proof.cleanup) return tokens.sentence(proof.cleanup)
-    if (proof.cleanup_settled === true) return "Settled"
-    if (proof.cleanup_settled === false) return "Unsettled"
-    return "Not confirmed"
+  readonly property var timeline: StatusModel.taskRuns(detail, StatusModel.taskLive(selectedTaskRecord))
+  onTimelineChanged: if (timelineReady) syncTimeline()
+  Component.onCompleted: { timelineReady = true; syncTimeline() }
+  function syncTimeline() {
+    var newest = timeline.length ? timeline[timeline.length - 1].items.slice(-1)[0].key : ""
+    // Measure before changing delegates. First open always leaves the outcome in view.
+    var bottom = timelineRows.mapToItem(detailColumn, 0, timelineRows.height).y
+    var follow = !!lastNewestStepKey && newest !== lastNewestStepKey &&
+      detailKind === "task" && StatusModel.taskLive(selectedTaskRecord) &&
+      Math.abs(detailScroll.contentY + detailScroll.height - bottom) <= Style.space(64)
+    var nextFolds = {}
+    for (var i = 0; i < timeline.length; i++) {
+      var group = timeline[i], keys = {}
+      group.items.forEach(function(s) { keys[s.key] = true })
+      // Match overlapping receipts, including a fold whose oldest receipt slid out.
+      var found = -1
+      for (var j = i; j < timelineModel.count; j++) {
+        var old = JSON.parse(timelineModel.get(j).groupJson)
+        if (old.kind === group.kind && old.items.some(function(s) { return !!keys[s.key] })) { found = j; break }
+      }
+      var words = JSON.stringify(group)
+      if (found < 0) timelineModel.insert(i, { groupJson: words })
+      else {
+        if (found !== i) timelineModel.move(found, i, 1)
+        if (timelineModel.get(i).groupJson !== words) timelineModel.setProperty(i, "groupJson", words)
+      }
+      // New receipts inherit an opened fold, even after every original key expires.
+      if (foldOpen(group)) group.items.forEach(function(s) { nextFolds[s.key] = true })
+    }
+    if (timelineModel.count > timeline.length) timelineModel.remove(timeline.length, timelineModel.count - timeline.length)
+    openFolds = nextFolds
+    lastNewestStepKey = newest
+    if (follow) Qt.callLater(function() {
+      var end = timelineRows.mapToItem(detailColumn, 0, timelineRows.height).y
+      detailScroll.contentY = Math.max(0, Math.min(end - detailScroll.height, detailScroll.contentHeight - detailScroll.height))
+    })
   }
   function procedureTitle(record) {
     return String((record && record.definition && record.definition.title) || "Untitled procedure")
@@ -179,8 +191,8 @@ Item {
       anchors.top: rowTitle.bottom
       anchors.topMargin: Style.space(2)
       width: parent.width - x - Style.space(10)
-      text: recordRow.meta
-      dimmed: true
+      textFormat: Text.StyledText
+      text: root.tokens.ink(recordRow.meta.split(" · ")[0], root.tokens.textTint(recordRow.markerColor)) + root.tokens.ink(recordRow.meta.indexOf(" · ") >= 0 ? recordRow.meta.slice(recordRow.meta.indexOf(" · ")) : "", root.tokens.dim)
       font.pixelSize: Style.font.bodySmall
       wrapMode: Text.NoWrap
       elide: Text.ElideRight
@@ -192,6 +204,113 @@ Item {
     width: listColumn.width
     rowHeight: Style.space(48)
     spacing: Style.space(6)
+  }
+
+  component TimelineStep: Item {
+    id: stepRow
+    property var step: ({})
+    implicitHeight: Math.max(stepText.implicitHeight, timeText.implicitHeight) + Style.space(8)
+    Rectangle {
+      x: Style.space(2); y: Style.space(8)
+      width: Style.space(9); height: width
+      color: root.stepColor(stepRow.step)
+      Accessible.ignored: true
+    }
+    Copy {
+      id: timeText
+      x: Style.space(22); y: Style.space(4); width: Style.space(74)
+      text: StatusModel.taskTime(stepRow.step.at)
+      color: root.tokens.faint
+      font.pixelSize: Style.font.bodySmall
+    }
+    Column {
+      id: stepText
+      x: Style.space(104); y: Style.space(4); width: parent.width - x
+      spacing: Style.space(3)
+      Flow {
+        width: parent.width
+        spacing: Style.space(6)
+        Copy {
+          text: stepRow.step.verb
+          color: root.tokens.textTint(stepRow.step.kind === "task" ? root.tokens.humanColor : stepRow.step.kind === "exec" ? root.tokens.workingColor : root.tokens.accent)
+          font.pixelSize: Style.font.caption
+          font.capitalization: Font.AllUppercase
+        }
+        Copy {
+          width: Math.min(implicitWidth, parent.width)
+          text: stepRow.step.what
+          wrapMode: Text.WrapAnywhere
+        }
+        Copy {
+          visible: stepRow.step.tone !== "ready"
+          width: Math.min(implicitWidth, parent.width)
+          text: stepRow.step.result
+          color: root.tokens.textTint(root.tokens.stateColor(stepRow.step.tone))
+          font.pixelSize: Style.font.bodySmall
+        }
+      }
+      Copy {
+        visible: stepRow.step.error !== ""
+        width: parent.width; text: stepRow.step.error
+        color: root.tokens.textTint(root.tokens.attentionColor)
+        font.pixelSize: Style.font.bodySmall
+        wrapMode: Text.WrapAnywhere
+      }
+      Copy {
+        visible: stepRow.step.expect !== "" && stepRow.step.tone !== "ready"
+        width: parent.width; text: "Expected: " + stepRow.step.expect
+        color: stepRow.step.tone === "paused" ? root.tokens.textTint(root.tokens.pausedColor) : root.tokens.dim
+        font.pixelSize: Style.font.bodySmall
+        wrapMode: Text.WrapAnywhere
+      }
+    }
+  }
+
+  component TimelineFold: Rectangle {
+    id: foldLine
+    property var group: ({})
+    property bool opened: false
+    signal toggled()
+    implicitHeight: Math.max(foldText.implicitHeight, foldTime.implicitHeight) + Style.space(12)
+    color: activeFocus ? root.tokens.raised : "transparent"
+    border.width: activeFocus ? 1 : 0
+    border.color: root.tokens.accent
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: group.summary + (opened ? ", fold them" : ", show them")
+    Accessible.focusable: true
+    Accessible.onPressAction: toggled()
+    Keys.onReturnPressed: toggled()
+    Keys.onEnterPressed: toggled()
+    Keys.onSpacePressed: toggled()
+    onActiveFocusChanged: if (activeFocus) {
+      var point = mapToItem(detailColumn, 0, 0)
+      if (point.y < detailScroll.contentY) detailScroll.contentY = point.y
+      else if (point.y + height > detailScroll.contentY + detailScroll.height) detailScroll.contentY = point.y + height - detailScroll.height
+    }
+    Rectangle {
+      x: Style.space(2); y: Style.space(10); width: Style.space(9); height: width
+      color: root.stepColor(group.items[0])
+      Accessible.ignored: true
+    }
+    Copy {
+      id: foldTime
+      x: Style.space(22); y: Style.space(6); width: Style.space(74)
+      text: StatusModel.taskTime(foldLine.group.items[0].at)
+      color: root.tokens.faint
+      font.pixelSize: Style.font.bodySmall
+    }
+    Copy {
+      id: foldText
+      x: Style.space(104); y: Style.space(6); width: parent.width - x - Style.space(4)
+      text: foldLine.opened ? "▾ Fold " + foldLine.group.items.length + " Steps" : foldLine.group.summary + " ▸ Show"
+      color: root.tokens.textTint(foldLine.group.items.some(function(s) { return s.tone === "paused" }) ? root.tokens.pausedColor : root.stepColor(foldLine.group.items[0]))
+    }
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: { foldLine.forceActiveFocus(); foldLine.toggled() }
+    }
   }
 
   // ---- left: follow, tasks, procedures, results
@@ -249,7 +368,7 @@ Item {
           width: listColumn.width
           row: index
           title: StatusModel.clip(StatusModel.taskTitle(modelData), 90)
-          meta: root.taskState(modelData) + (root.taskAgent(modelData) ? " · " + root.taskAgent(modelData) : "")
+          meta: StatusModel.taskState(modelData) + (StatusModel.taskAgent(modelData) ? " · " + StatusModel.taskAgent(modelData) : "")
           markerColor: root.taskStateColor(modelData)
           current: root.detailKind === "task" && !!root.service && root.service.selectedTaskRef === modelData.task_ref
           onPicked: root.selectTask(modelData.task_ref)
@@ -336,37 +455,87 @@ Item {
 
         // Task
         Column {
+          id: taskColumn
           visible: root.detailKind === "task"
           width: parent.width
           spacing: Style.space(10)
           readonly property bool hasTask: !!(root.service && root.service.selectedTaskRef)
+          readonly property var checks: StatusModel.taskChecks(root.detail)
+          readonly property var criteria: hasTask ? StatusModel.taskCriteria(root.detail) : []
+          readonly property color outcomeColor: root.taskStateColor(root.selectedTaskRecord)
+          Rectangle {
+            visible: taskColumn.hasTask
+            width: parent.width
+            implicitHeight: bandText.implicitHeight + Style.space(24)
+            color: Qt.alpha(taskColumn.outcomeColor, 0.12)
+            Rectangle { width: Style.space(4); height: parent.height; color: taskColumn.outcomeColor }
+            Column {
+              id: bandText
+              x: Style.space(14); y: Style.space(12); width: parent.width - x - Style.space(14)
+              spacing: Style.space(4)
+              Copy {
+                width: parent.width
+                text: StatusModel.taskState(root.selectedTaskRecord) + " · " + taskColumn.checks.met + " of " + taskColumn.checks.total + " checks met"
+                color: root.tokens.textTint(taskColumn.outcomeColor)
+                font.pixelSize: Style.font.heading
+                font.bold: true
+              }
+              Copy {
+                width: parent.width
+                text: StatusModel.taskBandDetail(root.detail, root.selectedTaskRecord)
+                dimmed: true
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+          }
           Copy {
             width: parent.width
-            text: root.selectedTaskRecord ? StatusModel.taskTitle(root.selectedTaskRecord) : "Select a task"
+            text: taskColumn.hasTask ? String((root.selectedTaskRecord || {}).goal || "Untitled task") : "Select a task"
             font.pixelSize: Style.font.heading + Style.space(2)
             font.bold: true
           }
-          Copy {
-            visible: parent.hasTask
+          Rectangle {
+            visible: taskColumn.hasTask && !!(root.selectedTaskRecord || {}).completion_summary
             width: parent.width
-            text: root.taskState(root.selectedTaskRecord || {}) + (root.taskAgent(root.selectedTaskRecord) ? " · " + root.taskAgent(root.selectedTaskRecord) : "") + " · " + root.taskProof(root.detail)
+            implicitHeight: summaryText.implicitHeight + Style.space(16)
+            color: Qt.alpha(root.tokens.accent, 0.05)
+            Rectangle { width: Style.space(3); height: parent.height; color: root.tokens.accent }
+            Column {
+              id: summaryText
+              x: Style.space(12); y: Style.space(8); width: parent.width - x - Style.space(12)
+              spacing: Style.space(3)
+              Copy { text: "The agent's summary"; dimmed: true; font.pixelSize: Style.font.caption }
+              Copy {
+                id: summaryCopy
+                width: parent.width
+                text: StatusModel.taskPlain((root.selectedTaskRecord || {}).completion_summary)
+                maximumLineCount: root.summaryOpen ? 2147483647 : 3
+                elide: Text.ElideRight
+              }
+              ActionButton {
+                visible: root.summaryOpen || summaryCopy.truncated
+                label: root.summaryOpen ? "Show Less" : "Show All"
+                role: "quiet"; size: "small"
+                onClicked: root.summaryOpen = !root.summaryOpen
+              }
+            }
           }
           Copy {
-            visible: parent.hasTask && !!(root.service && root.service.selectedTaskDetailObservedAt)
+            visible: taskColumn.hasTask && !!(root.service && root.service.selectedTaskDetailObservedAt)
             width: parent.width
             text: root.service ? "Updated " + StatusModel.ageLabel(root.service.selectedTaskDetailObservedAt, root.service.nowMs) : ""
             dimmed: true
             font.pixelSize: Style.font.caption
           }
-          Copy { visible: parent.hasTask && !!(root.service && root.service.selectedTaskLoading); text: "Updating task details…"; dimmed: true; font.pixelSize: Style.font.bodySmall }
+          Copy { visible: taskColumn.hasTask && !!(root.service && root.service.selectedTaskLoading && root.service.selectedTaskDetailRef !== root.service.selectedTaskRef); text: "Updating task details…"; dimmed: true; font.pixelSize: Style.font.bodySmall }
           Copy {
             visible: !!(root.service && root.service.readErrors.task)
             width: parent.width
             text: root.service ? StatusModel.clip(root.service.readErrors.task, 200) : ""
-            color: Color.urgent
+            color: root.tokens.textTint(root.tokens.attentionColor)
             font.pixelSize: Style.font.bodySmall
           }
-          Copy { visible: parent.hasTask && root.taskWarning(root.detail) !== ""; width: parent.width; text: root.taskWarning(root.detail); color: Color.urgent; font.pixelSize: Style.font.bodySmall }
+          Copy { visible: taskColumn.hasTask && StatusModel.taskWarning(root.detail) !== ""; width: parent.width; text: StatusModel.taskWarning(root.detail); color: root.tokens.textTint(root.tokens.attentionColor); font.pixelSize: Style.font.bodySmall }
           Flow {
             visible: parent.hasTask
             width: parent.width
@@ -395,65 +564,121 @@ Item {
             }
           }
           Copy {
-            visible: parent.hasTask && !(root.service && root.service.selectedTaskLoading) && root.taskCriteria(root.detail).length === 0 && root.taskReceipts(root.detail).length === 0 && root.taskDeliveries(root.detail).length === 0
+            visible: taskColumn.hasTask && !(root.service && root.service.selectedTaskLoading) && taskColumn.criteria.length === 0 && root.timeline.length === 0 && StatusModel.taskDeliveries(root.detail).length === 0
             width: parent.width
             text: "No detailed evidence is recorded for this task."
             dimmed: true
             font.pixelSize: Style.font.bodySmall
           }
-          Copy { visible: parent.hasTask && root.taskCriteria(root.detail).length > 0; eyebrow: true; text: "Checks" }
-          Repeater {
-            model: parent.hasTask ? root.taskCriteria(root.detail) : []
-            delegate: Column {
-              width: detailColumn.width
-              spacing: Style.space(3)
-              property var criterion: modelData
-              Copy { width: parent.width; text: String(criterion.description || criterion.id || criterion.criterion_id || "Check"); font.bold: true }
-              Copy { width: parent.width; text: (root.tokens.sentence(criterion.state || criterion.outcome) || "Unverified") + (criterion.required === false ? " · optional" : " · required"); dimmed: true; font.pixelSize: Style.font.bodySmall }
-              Repeater {
-                model: Array.isArray(criterion.evidence) ? criterion.evidence : []
-                delegate: Copy { width: detailColumn.width; text: String(modelData.summary || modelData.outcome || "Evidence available"); font.pixelSize: Style.font.bodySmall }
-              }
-            }
-          }
-          Copy { visible: parent.hasTask && root.taskReceipts(root.detail).length > 0; eyebrow: true; text: "What it did" }
-          Repeater {
-            model: parent.hasTask ? root.taskReceipts(root.detail) : []
-            delegate: Column {
-              width: detailColumn.width
-              spacing: Style.space(3)
-              property var receipt: modelData
-              Copy { width: parent.width; text: String(receipt.summary || root.tokens.sentence(receipt.tool) || "Action"); font.bold: true }
-              Copy {
-                width: parent.width
-                text: root.taskReceiptState(receipt)
-                font.pixelSize: Style.font.bodySmall
-                color: receipt.dependency_state === "unresolved" || receipt.requires_reconciliation || receipt.effect === "unknown" ? Color.urgent : Color.popups.text
-              }
-            }
-          }
           Copy {
-            visible: parent.hasTask && !!(root.detail && root.detail.receipt_next_cursor)
+            visible: taskColumn.criteria.length > 0
+            eyebrow: true
+            text: "Checks · " + taskColumn.checks.met + " of " + taskColumn.checks.total + " met"
+            color: root.tokens.textTint(taskColumn.checks.met === taskColumn.checks.total ? root.tokens.readyColor : root.tokens.pausedColor)
+          }
+          Row {
+            visible: taskColumn.criteria.length > 0
             width: parent.width
-            text: "More activity exists; this shows part of it."
+            height: Style.space(6)
+            spacing: Style.space(2)
+            Repeater {
+              model: taskColumn.criteria
+              delegate: Rectangle {
+                width: (taskColumn.width - (taskColumn.criteria.length - 1) * Style.space(2)) / taskColumn.criteria.length
+                height: Style.space(6)
+                color: modelData.state === "satisfied" ? root.tokens.readyColor : root.tokens.pausedColor
+                Accessible.ignored: true
+              }
+            }
+          }
+          Repeater {
+            model: taskColumn.criteria
+            delegate: Row {
+              width: detailColumn.width
+              spacing: Style.space(6)
+              property var criterion: modelData
+              Copy {
+                width: Style.space(18)
+                text: parent.criterion.state === "satisfied" ? "✓" : "○"
+                color: root.tokens.textTint(parent.criterion.state === "satisfied" ? root.tokens.readyColor : root.tokens.pausedColor)
+                font.bold: true
+              }
+              Column {
+                width: parent.width - Style.space(24)
+                spacing: Style.space(3)
+                Copy { width: parent.width; text: String(criterion.description || criterion.id || criterion.criterion_id || "Check"); font.bold: true }
+                Copy {
+                  width: parent.width
+                  text: (criterion.state === "satisfied" ? "Met" : "Not met yet") + (criterion.required === false ? " · optional" : " · required")
+                  color: root.tokens.textTint(criterion.state === "satisfied" ? root.tokens.readyColor : root.tokens.pausedColor)
+                  font.pixelSize: Style.font.bodySmall
+                }
+                Copy { visible: text !== ""; width: parent.width; text: StatusModel.taskClaim(criterion); dimmed: true; font.pixelSize: Style.font.bodySmall }
+                Repeater {
+                  model: Array.isArray(criterion.evidence) ? criterion.evidence : []
+                  delegate: Copy { width: parent.width; text: StatusModel.taskPlain(modelData.summary || modelData.outcome || "Evidence available"); font.pixelSize: Style.font.bodySmall }
+                }
+              }
+            }
+          }
+          Copy { visible: taskColumn.hasTask && root.timeline.length > 0; eyebrow: true; text: "What it did · oldest first" }
+          Copy {
+            visible: taskColumn.hasTask && !!(root.detail && (root.detail.receipt_next_cursor || root.detail.more))
+            width: parent.width
+            text: "Earlier steps aren't loaded."
             dimmed: true
             font.pixelSize: Style.font.bodySmall
           }
-          Copy { visible: parent.hasTask && root.taskDeliveries(root.detail).length > 0; eyebrow: true; text: "Required results" }
+          Item {
+            visible: taskColumn.hasTask && root.timeline.length > 0
+            width: parent.width
+            implicitHeight: timelineRows.implicitHeight
+            Rectangle {
+              x: Style.space(6); y: Style.space(8); width: 1; height: Math.max(0, parent.height - Style.space(16))
+              color: root.tokens.rule
+              Accessible.ignored: true
+            }
+            Column {
+              id: timelineRows
+              width: parent.width
+              Repeater {
+                model: taskColumn.hasTask ? timelineModel : null
+                delegate: Column {
+                  id: runColumn
+                  required property string groupJson
+                  width: timelineRows.width
+                  property var group: JSON.parse(groupJson)
+                  readonly property bool opened: root.foldOpen(group)
+                  TimelineFold {
+                    visible: runColumn.group.fold
+                    width: parent.width
+                    group: runColumn.group
+                    opened: runColumn.opened
+                    onToggled: root.toggleFold(runColumn.group)
+                  }
+                  Repeater {
+                    model: !runColumn.group.fold || runColumn.opened ? runColumn.group.items : []
+                    delegate: TimelineStep { width: runColumn.width; step: modelData }
+                  }
+                }
+              }
+            }
+          }
+          Copy { visible: taskColumn.hasTask && StatusModel.taskDeliveries(root.detail).length > 0; eyebrow: true; text: "Required Results" }
           Repeater {
-            model: parent.hasTask ? root.taskDeliveries(root.detail) : []
+            model: taskColumn.hasTask ? StatusModel.taskDeliveries(root.detail) : []
             delegate: Column {
               width: detailColumn.width
               spacing: Style.space(3)
               property var delivery: modelData
               Copy { width: parent.width; text: String(delivery.host_id || delivery.destination_host || delivery.host || "Unknown computer") + " · " + String(delivery.destination_path || delivery.path || "Destination unavailable"); font.bold: true }
-              Copy { width: parent.width; text: root.tokens.sentence(delivery.state) || "Pending"; font.pixelSize: Style.font.bodySmall }
+              Copy { width: parent.width; text: root.tokens.sentence(delivery.state) || "Pending"; color: root.tokens.textTint(root.tokens.stateColor(StatusModel.taskDeliveryTone(delivery))); font.pixelSize: Style.font.bodySmall }
             }
           }
           Copy {
-            visible: parent.hasTask && Object.keys(root.taskProjection(root.detail)).length > 0
+            visible: taskColumn.hasTask && Object.keys(StatusModel.taskProjection(root.detail)).length > 0
             width: parent.width
-            text: "Cleanup · " + root.taskCleanup(root.detail)
+            text: "Cleanup · " + StatusModel.taskCleanup(root.detail)
             font.pixelSize: Style.font.bodySmall
           }
           Repeater {
@@ -477,13 +702,22 @@ Item {
           // Status, revision, applicability, evidence warnings, then the steps: one shared wording.
           Repeater {
             model: parent.record ? StatusModel.procedureLines(parent.record).slice(1) : []
-            delegate: Copy { width: detailColumn.width; text: String(modelData); font.pixelSize: Style.font.bodySmall }
+            delegate: Copy {
+              required property var modelData
+              required property int index
+              readonly property string line: String(modelData)
+              readonly property string value: line.indexOf(": ") >= 0 ? line.slice(line.indexOf(": ") + 2) : ""
+              width: detailColumn.width
+              textFormat: Text.StyledText
+              text: root.tokens.labeled(line, index === 1 ? root.tokens.faint : root.tokens.textTint(root.tokens.statusColor(value)))
+              font.pixelSize: Style.font.bodySmall
+            }
           }
           Copy {
             visible: !!(root.service && root.service.readErrors.procedure)
             width: parent.width
             text: root.service ? StatusModel.clip(root.service.readErrors.procedure, 200) : ""
-            color: Color.urgent
+            color: root.tokens.textTint(root.tokens.attentionColor)
             font.pixelSize: Style.font.bodySmall
           }
           Row {

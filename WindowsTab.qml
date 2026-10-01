@@ -164,7 +164,7 @@ Item {
         text: root.tooOld ? "Update ibara on this computer to manage its windows."
           : root.shownError ? StatusModel.clip(root.shownError, 200)
           : root.service && (root.service.readPending("windows") || !root.loaded) ? "Loading…" : "No windows."
-        dimmed: !root.tooOld
+        color: root.tokens.textTint(root.tooOld ? root.tokens.pausedColor : root.shownError ? root.tokens.attentionColor : root.tokens.dim)
         font.pixelSize: Style.font.bodySmall
       }
 
@@ -183,7 +183,7 @@ Item {
               visible: section.space.active === true
               anchors.verticalCenter: parent.verticalCenter
               text: "On Screen"
-              color: Color.accent
+              color: root.tokens.textTint(root.tokens.accent)
               font.pixelSize: Style.font.bodySmall
             }
           }
@@ -266,7 +266,7 @@ Item {
                   Copy {
                     id: badge
                     text: row.inUse ? "In Use by an Agent" : "Left by an Agent"
-                    color: row.inUse ? root.tokens.workingColor : root.tokens.pausedColor
+                    color: root.tokens.textTint(row.inUse ? root.tokens.workingColor : root.tokens.pausedColor)
                     font.pixelSize: Style.font.bodySmall
                     font.bold: true
                     wrapMode: Text.NoWrap
@@ -277,7 +277,7 @@ Item {
                     anchors.leftMargin: Style.space(8)
                     anchors.right: parent.right
                     text: row.task ? String(row.task.goal || "") : ""
-                    dimmed: true
+                    color: root.tokens.foreground
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.NoWrap
                     elide: Text.ElideRight
@@ -287,7 +287,7 @@ Item {
                   visible: !!row.note
                   width: parent.width
                   text: row.note ? row.note.text : ""
-                  color: row.note && row.note.busy ? Color.urgent : root.tokens.dim
+                  color: root.tokens.textTint(row.note && row.note.busy ? root.tokens.attentionColor : root.tokens.pausedColor)
                   font.pixelSize: Style.font.bodySmall
                 }
               }

@@ -398,7 +398,7 @@ Item {
                   if (total > 0 && bytes > 0) return Math.floor(bytes * 100 / total) + "% · " + StatusModel.bytesLabel(bytes) + " of " + StatusModel.bytesLabel(total)
                   return (t.direction === "receive" ? "Receiving" : "Sending") + (total > 0 ? " " + StatusModel.bytesLabel(total) : "") + "…"
                 }
-                color: t.state === "verified" ? root.tokens.readyColor : t.state === "failed" ? Color.urgent : Qt.alpha(Color.popups.text, 0.72)
+                color: root.tokens.textTint(t.state === "verified" ? root.tokens.readyColor : t.state === "failed" ? root.tokens.attentionColor : root.tokens.workingColor)
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.NoWrap
               }
@@ -436,7 +436,7 @@ Item {
                 anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
                 text: StatusModel.clip(String(t.error || "It stopped before it could be checked."), 240)
-                color: Color.urgent
+                color: root.tokens.textTint(root.tokens.attentionColor)
                 font.pixelSize: Style.font.caption
               }
               ActionButton {

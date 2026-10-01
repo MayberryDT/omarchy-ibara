@@ -39,7 +39,7 @@ Item {
   readonly property bool canRename: !!computer && computer.trust_state === "verified"
   readonly property string controlReason: host ? host.controlBlockedReason(computer) : "Unavailable"
   readonly property var tabs: [
-    { id: "screen", label: "Screen" }, { id: "windows", label: "Windows" }, { id: "activity", label: "Activity" }, { id: "files", label: "Files" },
+    { id: "screen", label: "Screen" }, { id: "windows", label: "Windows" }, { id: "logins", label: "Logins" }, { id: "activity", label: "Activity" }, { id: "files", label: "Files" },
     { id: "access", label: "Access" }, { id: "system", label: "System" }, { id: "settings", label: "Settings" }
   ]
   // A pause a person made waits for Resume, and so does ibara's own pause after a restart when
@@ -92,7 +92,7 @@ Item {
     if (service && service.renameComputer(computerId, name)) endRename()
   }
   function currentTab() {
-    var page = tab === "windows" ? windowsPage : tab === "activity" ? activityPage : tab === "files" ? filesPage : tab === "access" ? accessPage : tab === "system" ? systemPage : tab === "settings" ? settingsPage : screenPage
+    var page = tab === "windows" ? windowsPage : tab === "logins" ? loginsPage : tab === "activity" ? activityPage : tab === "files" ? filesPage : tab === "access" ? accessPage : tab === "system" ? systemPage : tab === "settings" ? settingsPage : screenPage
     return page.item
   }
   function indexOfComputer(id) {
@@ -277,12 +277,13 @@ Item {
         anchors.right: headActions.left
         anchors.rightMargin: Style.space(12)
         anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.StyledText
         text: {
           var who = root.tokens.actor(root.computer)
           var what = root.tokens.activity(root.computer, root.service ? root.service.nowMs : 0)
-          return who && what && what.toLowerCase().indexOf(who.toLowerCase()) !== 0 ? who + " · " + what : (what || who || root.tokens.stateLabel(root.fleetState, root.computer))
+          var words = root.tokens.activityMarkup(root.computer, root.service ? root.service.nowMs : 0)
+          return who && what && what.toLowerCase().indexOf(who.toLowerCase()) !== 0 ? root.tokens.ink(who + " · ", root.tokens.dim) + words : (what ? words : root.tokens.ink(who || root.tokens.stateLabel(root.fleetState, root.computer), root.tokens.textTint(root.tokens.stateColor(root.fleetState))))
         }
-        dimmed: true
         wrapMode: Text.NoWrap
         elide: Text.ElideRight
       }
@@ -510,8 +511,9 @@ Item {
           anchors.rightMargin: Style.space(6)
           anchors.top: rowName.bottom
           anchors.topMargin: Style.space(1)
-          text: root.tokens.activity(row.computer, root.service ? root.service.nowMs : 0)
-          dimmed: true
+          textFormat: Text.StyledText
+          text: root.tokens.activityMarkup(row.computer, root.service ? root.service.nowMs : 0)
+          Accessible.name: root.tokens.activity(row.computer, root.service ? root.service.nowMs : 0)
           font.pixelSize: Style.font.bodySmall
           wrapMode: Text.NoWrap
           elide: Text.ElideRight
@@ -615,6 +617,19 @@ Item {
         current: root.tab
         sourceComponent: Component {
           WindowsTab {
+            host: root.host
+            service: root.service
+            computerId: root.computerId
+            computer: root.computer
+          }
+        }
+      }
+      TabPage {
+        id: loginsPage
+        page: "logins"
+        current: root.tab
+        sourceComponent: Component {
+          LoginsTab {
             host: root.host
             service: root.service
             computerId: root.computerId

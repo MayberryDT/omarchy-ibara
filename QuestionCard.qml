@@ -14,6 +14,7 @@ Toast {
   // { computer_id, label, ref, summary, options, at, unreachable } from fleet-attention
   // (StatusModel.attentionView).
   property var item: null
+  readonly property Tokens tokens: Tokens {}
   // The quick panel is narrow: the heading has the line to itself.
   property bool compact: false
   property string chosen: ""
@@ -56,7 +57,7 @@ Toast {
       width: Math.min(implicitWidth, parent.width - (askedText.visible ? askedText.implicitWidth + parent.spacing : 0))
       text: root.heading
       font.bold: true
-      color: Color.urgent
+      color: root.tokens.textTint(root.tokens.attentionColor)
       wrapMode: Text.NoWrap
       elide: Text.ElideRight
     }
@@ -64,14 +65,14 @@ Toast {
       id: askedText
       visible: text !== "" && !root.compact
       text: root.unreachable ? "not answering right now" : root.asked
-      dimmed: true
+      color: root.unreachable ? root.tokens.textTint(root.tokens.pausedColor) : root.tokens.dim
       font.pixelSize: Style.font.bodySmall
       anchors.baseline: headingText.baseline
       wrapMode: Text.NoWrap
     }
   }
   Copy { width: parent.width; text: root.question; maximumLineCount: 5; elide: Text.ElideRight }
-  Copy { visible: root.unreachable; width: parent.width; text: root.unreachableReason; dimmed: true; font.pixelSize: Style.font.bodySmall }
+  Copy { visible: root.unreachable; width: parent.width; text: root.unreachableReason; color: root.tokens.textTint(root.tokens.pausedColor); font.pixelSize: Style.font.bodySmall }
   // No answers offered: any short answer.
   FieldInput {
     id: answerField

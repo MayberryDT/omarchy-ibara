@@ -35,7 +35,7 @@ BorderSurface {
   readonly property bool quiet: role === "quiet"
   readonly property bool hot: mouseArea.containsMouse || hasCursor
   readonly property color ink: Color.popups.text
-  readonly property color labelColor: filled ? Color.popups.background
+  property color labelColor: filled ? Color.popups.background
     : role === "danger" ? Color.urgent
     : selected ? Style.selectedStateColor(ink, Color.accent)
     : ink

@@ -20,7 +20,11 @@ Item {
   property var errors: ({})
   // key -> a line or two the page adds under that setting.
   property var notes: ({})
+  // key -> a Component the page adds under that setting's words, for what isn't one setting
+  // (Logins: the browser logins come from and the All Computers rules).
+  property var extras: ({})
   // Shown while there are no sections at all: still loading, or why they couldn't be read.
+  property color emptyColor: tokens.dim
   property string emptyText: ""
   property alias searchText: searchField.text
   // Every value leaves as text: "true"/"false", a decimal number, a choice's id, or what was typed.
@@ -271,7 +275,7 @@ Item {
               visible: row.saving
               anchors.baseline: titleText.baseline
               text: typeof root.busy[row.key] === "string" ? root.busy[row.key] : "Saving…"
-              dimmed: true
+              color: root.tokens.textTint(root.tokens.workingColor)
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.NoWrap
             }
@@ -288,15 +292,21 @@ Item {
             visible: text !== ""
             width: parent.width
             text: root.textOf(root.notes[row.key])
-            dimmed: true
+            color: root.tokens.foreground
             font.pixelSize: Style.font.bodySmall
           }
           Copy {
             visible: text !== ""
             width: parent.width
             text: row.errorText
-            color: Color.urgent
+            color: root.tokens.textTint(root.tokens.attentionColor)
             font.pixelSize: Style.font.bodySmall
+          }
+          Loader {
+            active: !!root.extras[row.key]
+            visible: active
+            width: parent.width
+            sourceComponent: root.extras[row.key] || null
           }
         }
 
@@ -306,7 +316,8 @@ Item {
           id: controls
           anchors.right: parent.right
           anchors.rightMargin: Style.space(10)
-          anchors.verticalCenter: parent.verticalCenter
+          // Beside a page's extra content the control stays level with the setting's title.
+          y: root.extras[row.key] ? words.y : Math.round((parent.height - height) / 2)
           layoutDirection: Qt.RightToLeft
           spacing: Style.space(8)
 
@@ -481,7 +492,7 @@ Item {
         visible: root.sections.length === 0 || !root.anyMatch
         width: parent.width
         text: root.sections.length === 0 ? root.emptyText : "No settings match. Clear the search."
-        dimmed: true
+        color: root.sections.length === 0 ? root.emptyColor : root.tokens.dim
       }
       Repeater {
         id: leftRepeater

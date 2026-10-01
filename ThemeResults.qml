@@ -45,7 +45,7 @@ Toast {
   dismissName: "Dismiss the theme results"
   Accessible.name: heading
 
-  Copy { width: parent.width; text: root.heading; color: root.failed ? Color.urgent : Color.popups.text; font.pixelSize: Style.font.bodySmall }
+  Copy { width: parent.width; text: root.heading; color: root.tokens.textTint(root.failed ? root.tokens.attentionColor : root.applying ? root.tokens.workingColor : root.clean ? root.tokens.readyColor : root.tokens.pausedColor); font.pixelSize: Style.font.bodySmall }
   // Every computer and what happened there, the ones that need a look first.
   Flow {
     visible: root.open && root.results.length > 0
@@ -62,9 +62,9 @@ Toast {
           anchors.verticalCenter: parent.verticalCenter
         }
         Copy {
-          text: modelData.label + " · " + (modelData.state === "applied" ? "applied" : modelData.state === "offline" ? "offline" : "failed")
+          textFormat: Text.StyledText
+          text: root.tokens.ink(modelData.label + " · ", root.tokens.dim) + root.tokens.ink(modelData.state === "applied" ? "applied" : modelData.state === "offline" ? "offline" : "failed", root.tokens.textTint(root.tokens.statusColor(modelData.state)))
           font.pixelSize: Style.font.bodySmall
-          color: modelData.state === "failed" ? Color.urgent : modelData.state === "offline" ? Qt.alpha(Color.popups.text, 0.64) : Color.popups.text
         }
       }
     }
@@ -74,8 +74,8 @@ Toast {
     delegate: Copy {
       required property var modelData
       width: parent ? parent.width : 0
-      text: modelData.label + ": " + modelData.message
-      color: modelData.state === "failed" ? Color.urgent : Qt.alpha(Color.popups.text, 0.64)
+      textFormat: Text.StyledText
+      text: root.tokens.labeled(modelData.label + ": " + modelData.message, root.tokens.textTint(root.tokens.statusColor(modelData.state)))
       font.pixelSize: Style.font.bodySmall
     }
   }

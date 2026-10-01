@@ -3,8 +3,8 @@ import qs.Commons
 import qs.Ui
 
 // A small fleet summary whose main job is opening the console. What waits for your answer comes
-// first, right under its title: a request to use this computer, then approvals and agents'
-// questions, oldest first (the first two, then "+N more" that opens the console). Then the
+// first, right under its title: a request to use this computer, then approvals, login requests and
+// agents' questions, oldest first (the first two, then "+N more" that opens the console). Then the
 // counts and up to 5 computers, the ones that need you or are in use first; the console handles everything
 // else. While ibara isn't running on this computer, it says so instead, with Start ibara, and the
 // computers are greyed at their last known state.
@@ -24,13 +24,14 @@ Panel {
   readonly property Tokens tokens: Tokens {}
   readonly property var computers: service && Array.isArray(service.computers) ? service.computers.filter(function(c) { return !!(c && c.computer_id) }) : []
   readonly property bool stopped: !!service && service.serviceStopped === true
-  // Approvals and agents' questions, oldest first; the first two show here.
+  // Approvals, login requests and agents' questions, oldest first; the first two show here.
   readonly property var approvals: service && Array.isArray(service.approvals) ? service.approvals : []
+  readonly property var logins: service && Array.isArray(service.logins) ? service.logins : []
   readonly property var questions: service && Array.isArray(service.questions) ? service.questions : []
-  readonly property var asks: stopped ? [] : approvals.concat(questions).sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
+  readonly property var asks: stopped ? [] : approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
   readonly property var shownAsks: asks.slice(0, 2)
   readonly property string moreAsksName: {
-    var a = approvals.length, q = questions.length
+    var a = approvals.length + logins.length, q = questions.length
     var words = (a ? (a === 1 ? "1 approval" : a + " approvals") : "") + (a && q ? " and " : "") + (q ? (q === 1 ? "1 question" : q + " questions") : "")
     return "Show all " + words + " in the console"
   }
@@ -167,7 +168,7 @@ Panel {
           edge: Color.urgent
           tinted: true
           Accessible.name: "ibara isn't running on this computer. " + stoppedHow.text
-          Copy { width: parent.width; text: "ibara isn't running on this computer."; font.bold: true; color: Color.urgent; font.pixelSize: Style.font.bodySmall }
+          Copy { width: parent.width; text: "ibara isn't running on this computer."; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor); font.pixelSize: Style.font.bodySmall }
           Copy {
             id: stoppedHow
             visible: !startIbara.visible
@@ -201,8 +202,9 @@ Panel {
             required property int index
             readonly property var entry: root.shownAsks[index] || null
             width: content.width
-            sourceComponent: askSlot.entry && askSlot.entry.kind === "approval" ? approvalCard : questionCard
+            sourceComponent: askSlot.entry && askSlot.entry.kind === "approval" ? approvalCard : askSlot.entry && askSlot.entry.kind === "login" ? loginCard : questionCard
             Component { id: approvalCard; ApprovalCard { service: root.service; item: askSlot.entry; compact: true; keyHints: askSlot.index === root.headIndex } }
+            Component { id: loginCard; LoginCard { service: root.service; item: askSlot.entry; compact: true; onSettingsWanted: root.summon({ route: "settings" }) } }
             Component { id: questionCard; QuestionCard { service: root.service; item: askSlot.entry; compact: true } }
           }
         }
@@ -258,7 +260,7 @@ Panel {
           width: parent.width
           text: root.service && root.service.ibaraMissing ? "ibara isn't set up on this computer yet. Open the console to finish."
             : root.stopped ? "" : root.service && root.service.lastError ? String(root.service.lastError) : "No computers yet. Open the console to add one."
-          dimmed: true
+          color: root.service && root.service.lastError ? root.tokens.textTint(root.tokens.attentionColor) : root.tokens.dim
           font.pixelSize: Style.font.bodySmall
         }
         Repeater {
@@ -305,8 +307,9 @@ Panel {
               anchors.right: parent.right
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              text: root.tokens.activity(modelData, root.service ? root.service.nowMs : 0)
-              dimmed: true
+              textFormat: Text.StyledText
+              text: root.tokens.activityMarkup(modelData, root.service ? root.service.nowMs : 0)
+              Accessible.name: root.tokens.activity(modelData, root.service ? root.service.nowMs : 0)
               font.pixelSize: Style.font.bodySmall
               maximumLineCount: 2
               elide: Text.ElideRight

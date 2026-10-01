@@ -37,6 +37,7 @@ Item {
     sections: root.service ? root.service.computerSettings : []
     busy: root.service ? root.service.settingsBusyFor(root.computerId) : ({})
     errors: root.service ? root.service.settingsErrorsFor(root.computerId) : ({})
+    emptyColor: root.tokens.textTint(root.service && root.service.readErrors["computer-settings"] ? root.tokens.attentionColor : root.tokens.workingColor)
     emptyText: root.service && root.service.readErrors["computer-settings"] ? StatusModel.clip(root.service.readErrors["computer-settings"], 300)
       : "Loading " + root.tokens.label(root.computer) + "'s settings…"
     onChangeRequested: (key, value) => { if (root.service) root.service.changeSetting(root.computerId, key, value) }

@@ -136,7 +136,9 @@ Item {
   }
   function waitingByComputer() {
     var out = ({})
-    for (var i = 0; i < approvals.length; i++) { var a = approvals[i].computer_id; out[a] = out[a] || { approvals: 0, questions: 0 }; out[a].approvals += 1 }
+    // A login request waits for your approval like any other.
+    var asks = approvals.concat(logins)
+    for (var i = 0; i < asks.length; i++) { var a = asks[i].computer_id; out[a] = out[a] || { approvals: 0, questions: 0 }; out[a].approvals += 1 }
     for (var j = 0; j < questions.length; j++) { var q = questions[j].computer_id; out[q] = out[q] || { approvals: 0, questions: 0 }; out[q].questions += 1 }
     return out
   }
@@ -1245,7 +1247,7 @@ Item {
     if (panelOpen) { Qt.callLater(root.refreshComputerSessions); loadAttention() }
     else closePreviews()
     // Opening the console asks what happened while you were away and reads its settings again.
-    if (surface === "console" && consoleOpen) { loadAway(); loadConsoleSettings(); loadWhatsNew() }
+    if (surface === "console" && consoleOpen) { loadAway(); loadConsoleSettings(); loadWhatsNew(); loadLoginSettings() }
     if (surface === "console" && consoleOpen && scopedComputerId) {
       if (!tasksLoaded && !readPending("tasks")) loadTasks()
       if (!artifactsLoaded && !readPending("artifacts")) loadArtifacts()
@@ -1420,7 +1422,8 @@ Item {
   function requestRead(kind, args, ref, identitySnapshot, scope) {
     if (denied) return
     var errors = Object.assign({}, readErrors)
-    delete errors[kind]
+    // Keep a task refresh error readable until the next successful answer.
+    if (kind !== "task" || String(ref || "") !== selectedTaskDetailRef) delete errors[kind]
     readErrors = errors
     var queue = readQueue.slice()
     for (var i = queue.length - 1; i >= 0; i--) if (queue[i].kind === kind) queue.splice(i, 1)
@@ -2505,7 +2508,7 @@ Item {
   property var hiddenNeeds: ({})
   // Computers that need a person, one entry each (StatusModel.needsYouView).
   readonly property var needsYou: StatusModel.needsYouView(attention, computers, hiddenNeeds)
-  readonly property int needsYouCount: approvals.length + questions.length + needsYou.length
+  readonly property int needsYouCount: approvals.length + logins.length + questions.length + needsYou.length
   function hideNeed(computerId) {
     var id = String(computerId || ""), hidden = Object.assign({}, hiddenNeeds)
     for (var i = 0; i < needsYou.length; i++) if (needsYou[i].computer_id === id) hidden[id] = needsYou[i].message
@@ -2586,6 +2589,7 @@ Item {
     }
     if (next) publishSessions(next)
     notifyApprovals()
+    notifyLogins()
     closeStaleApprovalNotices()
   }
   // Approve, Deny or Always Allow, from the console or a desktop notification. One no longer
@@ -2668,6 +2672,7 @@ Item {
   property var noticedApprovals: ({})
   function notifyApprovals() {
     if (!consoleBool("approval_notifications", true)) return
+    notifyQuestions()
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < approvals.length; i++) {
       var item = approvals[i]
@@ -2678,7 +2683,26 @@ Item {
       var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name })
       var actions = item.stopAsking ? ["-A", "approve=Allow", "-A", "deny=Not Now"]
         : ["-A", "approve=Approve", "-A", "deny=Deny"].concat(item.effect ? ["-A", "always=Always Allow"] : [])
-      notice.command = ["notify-send", "-a", "ibara", "-p"].concat(actions, [name + (item.stopAsking ? " needs your answer" : " needs your approval"), StatusModel.approvalNoticeBody(item)])
+      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "critical", "-t", "0"].concat(actions, [name + (item.stopAsking ? " needs your answer" : " needs your approval"), StatusModel.approvalNoticeBody(item, name, sessions[item.computer_id])])
+      notice.running = true
+      notices[item.ref] = notice
+    }
+    if (fresh) { noticedApprovals = seen; approvalNotices = notices }
+  }
+  function notifyQuestions() {
+    var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
+    for (var i = 0; i < questions.length; i++) {
+      var item = questions[i]
+      if (seen[item.ref]) continue
+      seen[item.ref] = true
+      fresh = true
+      var name = item.label || computerLabelFor(item.computer_id)
+      var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name, question: true, options: item.options.slice() })
+      var actions = []
+      for (var j = 0; j < item.options.length; j++) actions.push("-A", "option-" + j + "=" + StatusModel.titleCase(item.options[j]))
+      if (!actions.length) actions = ["-A", "open=Open Console"]
+      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "critical", "-t", "0"].concat(actions,
+        [name + " needs your answer", StatusModel.requestNoticeBody(item, name, sessions[item.computer_id], item.summary)])
       notice.running = true
       notices[item.ref] = notice
     }
@@ -2686,8 +2710,23 @@ Item {
   }
   function approvalNoticeLine(notice, line) {
     var text = String(line || "").trim()
-    if (/^[0-9]{1,10}$/.test(text) && !notice.noticeId) { notice.noticeId = text; return }
-    if ((text === "approve" || text === "deny" || text === "always") && !notice.answered) {
+    if (/^[0-9]{1,10}$/.test(text) && !notice.noticeId) { notice.noticeId = text; closeStaleApprovalNotices(); return }
+    if (notice.answered) return
+    if (text === "open") {
+      notice.answered = true
+      if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: notice.computerId }))
+    } else if (notice.question && /^option-[0-9]+$/.test(text)) {
+      var index = Number(text.substring(7))
+      if (index >= notice.options.length) return
+      notice.answered = true
+      if (!answerQuestion(notice.ref, notice.options[index]) && !consoleOpen)
+        queueNotice({ title: "ibara", body: "That question on " + notice.label + " could not be answered. Open the ibara console to check whether it is still waiting." })
+    } else if (notice.login && (text === "share" || text === "decline")) {
+      notice.answered = true
+      var item = loginByRef(notice.ref)
+      if (item) answerLogin(notice.ref, StatusModel.loginDecisions(item.login.sites, {}, text), false, true)
+      else if (!consoleOpen) queueNotice({ title: "ibara", body: "That request" + (notice.label ? " on " + notice.label : "") + " is no longer waiting." })
+    } else if (!notice.login && !notice.question && (text === "approve" || text === "deny" || text === "always")) {
       notice.answered = true
       answerApproval(notice.ref, text, true, notice.label)
     }
@@ -2696,18 +2735,312 @@ Item {
     if (approvalNotices[notice.ref] === notice) { var notices = Object.assign({}, approvalNotices); delete notices[notice.ref]; approvalNotices = notices }
     notice.destroy()
   }
-  // An approval answered anywhere else, or gone, closes its notification. One from a computer
-  // that isn't answering stays open: its approval still waits there.
+  // An approval or a login request answered anywhere else, or gone, closes its notification. One
+  // from a computer that isn't answering stays open: its request still waits there.
   function closeStaleApprovalNotices() {
     for (var ref in approvalNotices) {
       var notice = approvalNotices[ref]
-      if (notice.answered || !notice.noticeId || approvals.some(function(item) { return item.ref === ref })) continue
+      if (notice.answered || !notice.noticeId || approvals.some(function(item) { return item.ref === ref }) || logins.some(function(item) { return item.ref === ref }) || questions.some(function(item) { return item.ref === ref })) continue
       if (attentionUnreachable.indexOf(notice.computerId) !== -1) continue
       notice.answered = true
       var closer = oneShotComponent.createObject(root)
       closer.command = ["busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "CloseNotification", "u", notice.noticeId]
       closer.running = true
     }
+  }
+
+  // ---- login sharing (docs/reference.md, Logins). This computer can be the sharing computer: the
+  // one whose browser logins come from (`login-settings`, `login-on`, `login-off`). An agent's
+  // request for a site's login is an attention item of kind `login`, answered here only while this
+  // computer shares (`login-answer`); each answer except Don't Share sets a rule, for that computer
+  // or All Computers (`login-rule`). A computer's Logins tab reads its rules (`login-rows`), shares a
+  // login with chosen computers (`login-share-with`) and removes one (`login-remove`); Fleet
+  // Actions' Sync Logins makes every allowed site Allowed for All Computers (`login-sync`).
+  // loginSettings: StatusModel.loginSettingsView, or null until read (and on an ibara without login sharing).
+  property var loginSettings: null
+  readonly property bool loginsKnown: loginSettings !== null
+  readonly property var logins: attention.filter(function(item) { return item.kind === "login" })
+  onLoginsChanged: Qt.callLater(root.republishWaiting)
+  // The card asking whether agents may use your logins: once the console is set up (it has a
+  // computer) and until it is answered, never on a computer that also runs agents.
+  readonly property bool loginSetupWanted: !!loginSettings && !loginSettings.decided && !loginSettings.enabled && !loginSettings.targetRole && computers.length > 0
+  // The browser and profile Turn On uses: the one chosen here, else the one sharing, else the
+  // first supported browser found, with its Default profile when it has one.
+  property var loginChoice: null
+  readonly property var loginPick: {
+    var s = loginSettings, list = s ? s.browsers.filter(function(b) { return b.supported && b.profiles.length }) : []
+    var has = function(browser, profile) { return list.some(function(b) { return b.browser === browser && b.profiles.indexOf(profile) !== -1 }) }
+    if (loginChoice && has(loginChoice.browser, loginChoice.profile)) return loginChoice
+    if (s && has(s.browser, s.profile)) return { browser: s.browser, profile: s.profile }
+    if (!list.length) return null
+    return { browser: list[0].browser, profile: list[0].profiles.indexOf("Default") !== -1 ? "Default" : list[0].profiles[0] }
+  }
+  readonly property string loginBrowserName: StatusModel.loginBrowserName(loginSettings, loginSettings && loginSettings.enabled ? loginSettings.browser : loginPick ? loginPick.browser : "")
+  // The other computer a login request, or a computer (`computerId`), takes logins from, or "" when
+  // it is this one. A request names its sharing computer; a computer pinned to another sharing
+  // computer says so even while this one shares. With neither, any computer pinned elsewhere while
+  // this one doesn't share.
+  function loginSourceElsewhere(item, computerId) {
+    var s = loginSettings, own = s && s.enabled ? s.label : ""
+    var named = item && item.login ? item.login.sourceLabel : ""
+    if (named) return named !== own ? named : ""
+    var id = item ? String(item.computer_id || "") : String(computerId || "")
+    var byId = s ? s.computers : ({})
+    if (id) return byId[id] && byId[id].sourceElsewhere !== own ? byId[id].sourceElsewhere : ""
+    if (s && s.enabled) return ""
+    for (var other in byId) if (byId[other].sourceElsewhere) return byId[other].sourceElsewhere
+    return ""
+  }
+  // What the last answer left on each request: { ref: { signedOut: [site], decisions } }. A request
+  // with a signed-out site stays open until Retry or Don't Share.
+  property var loginOutcomes: ({})
+  function loginByRef(ref) {
+    for (var i = 0; i < logins.length; i++) if (logins[i].ref === ref) return logins[i]
+    return null
+  }
+  // A message about logins for the console: a note, or (error) one that stays until dismissed.
+  signal loginNote(string key, string text, bool error)
+  // Another computer shares logins now; `label` names it. Turn On asks whether to share from here instead.
+  signal loginAnotherSource(string label, string browser, string profile)
+  // Sync Logins' plan, from its dry run: { sites, computers, signedOut, older }.
+  signal loginSyncPlanned(var plan)
+  signal loginRuleSettled(string computerId, string site, string rule, bool ok)
+
+  function loadLoginSettings() {
+    if (busy["login-settings"]) return
+    setBusy("login-settings", "reading")
+    sideSend(["login-settings"], { busyKey: "login-settings" })
+  }
+  // The console reads its login settings again every 10 s: a site that rejected a shared login
+  // shows as soon as ibara learns it.
+  Timer { interval: 10000; repeat: true; running: root.loginsKnown && !root.daemonDown; onTriggered: root.loadLoginSettings() }
+  function chooseLoginBrowser(browser, profile) { loginChoice = { browser: String(browser), profile: String(profile) } }
+  function turnOnLogins(replace) {
+    var pick = loginPick
+    if (!pick || busy["login-on"]) return false
+    setBusy("login-on", "Turning on…")
+    sideSend(["login-on", "--browser", pick.browser, "--profile", pick.profile].concat(replace === true ? ["--replace"] : []), { busyKey: "login-on", browser: pick.browser, profile: pick.profile })
+    return true
+  }
+  function loginNotNow() {
+    if (busy["login-on"]) return false
+    setBusy("login-on", "Saving…")
+    sideSend(["login-not-now"], { busyKey: "login-on" })
+    return true
+  }
+  function turnOffLogins() {
+    if (busy["login-on"]) return false
+    setBusy("login-on", "Turning off…")
+    sideSend(["login-off"], { busyKey: "login-on" })
+    return true
+  }
+  // `computerId` is a computer's id or "all" (All Computers).
+  function setLoginRule(computerId, site, rule) {
+    var key = "login-rule:" + computerId + ":" + site
+    if (busy[key] || ["allow", "ask", "deny"].indexOf(rule) === -1 || !StatusModel.loginSite(site)) return false
+    setBusy(key, rule)
+    sideSend(["login-rule", "--computer", String(computerId), "--site", StatusModel.loginSite(site), "--rule", rule], { busyKey: key, loginComputer: String(computerId), site: StatusModel.loginSite(site), rule: rule })
+    return true
+  }
+  // The open computer's Logins tab.
+  property var loginRows: ({ rows: [], deniedAll: [] })
+  property string loginRowsComputerId: ""
+  property double loginRowsAt: 0
+  property string loginRowsError: ""
+  function loadLoginRows(computerId) {
+    var id = String(computerId || "")
+    if (!id || busy["login-rows"]) return
+    if (id !== loginRowsComputerId) { loginRows = { rows: [], deniedAll: [] }; loginRowsAt = 0; loginRowsError = ""; loginRowsComputerId = id }
+    setBusy("login-rows", "reading")
+    sideSend(["login-rows", "--computer", id], { busyKey: "login-rows", loginComputer: id })
+  }
+  // Share, Share With All Computers, Don't Share or Never Share, per site (StatusModel.loginDecisions).
+  // `retry` shares again the sites the person wasn't signed in to.
+  function answerLogin(ref, decisions, retry, fromNotice) {
+    var item = loginByRef(ref)
+    if (!item || busy["answer:" + ref]) return false
+    if (item.unreachable) { actionNotice = (item.label || computerLabelFor(item.computer_id)) + " isn't answering right now. You can answer once it's back."; return false }
+    sendLogin(["login-answer", "--computer", item.computer_id, "--att", ref, "--decisions", JSON.stringify(decisions)].concat(retry === true ? ["--retry"] : []),
+      { busyKey: "answer:" + ref, ref: ref, decisions: decisions, loginComputer: item.computer_id, label: item.label || computerLabelFor(item.computer_id), fromNotice: fromNotice === true })
+    return true
+  }
+  function sendLogin(args, route) {
+    if (route.busyKey) setBusy(route.busyKey, args[0])
+    sideSend(args, route)
+  }
+  // `to`: computer ids, or "all".
+  function shareLoginWith(site, to) {
+    var key = "login-share:" + site
+    if (busy[key]) return false
+    var list = to === "all" ? "all" : (Array.isArray(to) ? to : []).map(String).join(",")
+    if (!list) return false
+    sendLogin(["login-share-with", "--site", site, "--to", list], { busyKey: key, site: site })
+    return true
+  }
+  function removeLogin(computerId, site) {
+    var key = "login-remove:" + computerId + ":" + site
+    if (busy[key]) return false
+    sendLogin(["login-remove", "--computer", String(computerId), "--site", site], { busyKey: key, loginComputer: String(computerId), site: site })
+    return true
+  }
+  // Sync Logins: its dry run first, whose plan the console confirms (loginSyncPlanned), then the sync.
+  function planLoginSync() {
+    if (busy["login-sync"]) return false
+    sendLogin(["login-sync", "--dry-run"], { busyKey: "login-sync", dryRun: true })
+    return true
+  }
+  function syncLogins() {
+    if (busy["login-sync"]) return false
+    sendLogin(["login-sync"], { busyKey: "login-sync" })
+    return true
+  }
+  // Sites that rejected a shared login: one toast each, with Take Control, until put away.
+  property var loginRejectedSeen: ({})
+  property var loginRejected: []
+  readonly property double loginRejectedSince: Date.now() - 600000
+  function dismissLoginRejected(key) {
+    loginRejected = loginRejected.filter(function(entry) { return entry.key !== key })
+  }
+  function loginRejectedByKey(key) {
+    for (var i = 0; i < loginRejected.length; i++) if (loginRejected[i].key === key) return loginRejected[i]
+    return null
+  }
+  // "Tater4 runs an older ibara. Update ibara there to share logins with it."
+  function olderLoginWords(ids) {
+    var names = (Array.isArray(ids) ? ids : []).map(function(id) { return computerLabelFor(String(id)) })
+    if (!names.length) return ""
+    return StatusModel.listWords(names) + (names.length === 1 ? " runs an older ibara. Update ibara there to share logins with it." : " run an older ibara. Update ibara there to share logins with them.")
+  }
+  function consumeLogin(route, data, error, plain) {
+    var op = route.op
+    if (op === "login-settings") {
+      // An ibara without login sharing refuses the command: loginSettings stays null and nothing
+      // about logins shows. A failed read keeps what was read before.
+      if (error) return
+      var view = StatusModel.loginSettingsView(data)
+      if (!sameValue(loginSettings, view)) loginSettings = view
+      var fresh = StatusModel.loginRejectedFresh(view.rejected, loginRejectedSeen, loginRejectedSince)
+      if (fresh.length) {
+        var seen = Object.assign({}, loginRejectedSeen)
+        for (var i = 0; i < fresh.length; i++) seen[fresh[i].key] = true
+        loginRejectedSeen = seen
+        loginRejected = loginRejected.concat(fresh)
+      }
+      return
+    }
+    if (op === "login-on") {
+      if (error && String(error.code || "") === "ANOTHER_SOURCE") { loginAnotherSource(StatusModel.clip(data.label, 128) || "another computer", route.browser || "", route.profile || ""); return }
+      if (error) { reportError(plain || "ibara couldn't turn on login sharing.", "", ""); loadLoginSettings(); return }
+      if (route.browser) actionNotice = "Login sharing is on. Logins come from " + StatusModel.loginBrowserName(loginSettings, route.browser) + " on this computer, only when you allow them."
+      loadLoginSettings()
+    } else if (op === "login-not-now") {
+      if (error) { reportError(plain || "ibara couldn't save your answer.", "", ""); return }
+      actionNotice = "Login sharing stays off. You can turn it on in Settings under Logins."
+      loadLoginSettings()
+    } else if (op === "login-off") {
+      if (error) { reportError(plain || "ibara couldn't turn off login sharing.", "", ""); return }
+      // The extension leaves the browser when ibara can set it up there; else it says what stays.
+      var extension = data.extension_removed === true ? " ibara removed its extension from " + loginBrowserName + "."
+        : typeof data.extension_error === "string" && data.extension_error ? " " + StatusModel.clip(data.extension_error, 240)
+        : " Its extension stays in " + loginBrowserName + " until you remove it there or turn sharing on and off from a computer ibara can set up."
+      actionNotice = "Login sharing is off. Logins already on your computers stay until they run out or are removed." + extension
+      loadLoginSettings()
+    } else if (op === "login-rule") {
+      if (error) reportError(plain || "ibara couldn't change the rule for " + route.site + ".", "", "")
+      loginRuleSettled(route.loginComputer, route.site, route.rule, !error)
+      loadLoginSettings()
+      if (loginRowsComputerId) loadLoginRows(loginRowsComputerId)
+    } else if (op === "login-rows") {
+      if (route.loginComputer !== loginRowsComputerId) return
+      loginRowsError = error ? (plain || "ibara couldn't read this computer's logins.") : ""
+      if (!error) { var rows = StatusModel.loginRowsView(data); if (!sameValue(loginRows, rows)) loginRows = rows; loginRowsAt = Date.now() }
+    } else if (op === "login-answer") {
+      var name = route.label
+      if (error) {
+        var failed = "ibara couldn't answer the login request on " + name + ". " + plain
+        reportError(failed, "", "")
+        if (route.fromNotice && !consoleOpen) queueNotice({ title: "ibara", body: failed })
+        loadAttention()
+        return
+      }
+      var words = StatusModel.loginAnswerWords(data.sites, loginBrowserName, name)
+      var outcomes = Object.assign({}, loginOutcomes)
+      if (words.signedOut.length) outcomes[route.ref] = { signedOut: words.signedOut, decisions: route.decisions }
+      else delete outcomes[route.ref]
+      loginOutcomes = outcomes
+      if (!words.signedOut.length) attention = attention.filter(function(entry) { return entry.ref !== route.ref })
+      if (words.note) actionNotice = words.note
+      if (words.waiting) loginNote("login-waiting:" + route.ref, words.waiting, true)
+      if (words.unknown) loginNote("login-unknown:" + route.ref, words.unknown, true)
+      if (words.off) { loginNote("login-off:" + route.ref, "Login sharing is off, so nothing was shared. Turn it on in Settings under Logins.", true); loadLoginSettings() }
+      if (route.fromNotice && !consoleOpen) {
+        var said = [words.note, words.waiting, words.unknown, StatusModel.loginSignedOutWords(words.signedOut, loginBrowserName)].filter(function(t) { return t !== "" }).join(" ")
+        if (said) queueNotice({ title: "ibara", body: said })
+      }
+      loadAttention()
+    } else if (op === "login-share-with") {
+      if (error) { reportError(plain || "ibara couldn't share the login for " + route.site + ".", "", ""); return }
+      var delivered = (Array.isArray(data.delivered) ? data.delivered : []).map(function(id) { return computerLabelFor(String(id)) })
+      var deferred = (Array.isArray(data.deferred) ? data.deferred : []).map(function(id) { return computerLabelFor(String(id)) })
+      var unknown = (Array.isArray(data.unknown) ? data.unknown : []).map(function(id) { return computerLabelFor(String(id)) })
+      var parts = []
+      if (delivered.length) parts.push("Shared your login for " + route.site + " with " + StatusModel.listWords(delivered) + ".")
+      if (deferred.length) parts.push(StatusModel.listWords(deferred) + (deferred.length === 1 ? " gets" : " get") + " it the first time an agent needs it.")
+      var older = olderLoginWords(data.older)
+      if (parts.length) actionNotice = parts.join(" ")
+      else if (!unknown.length && !older) actionNotice = "Nothing was shared: none of those computers can take it."
+      if (unknown.length) loginNote("login-share-unknown:" + route.site, "Couldn't confirm the login for " + route.site + " was written on " + StatusModel.listWords(unknown) + ". Try Share With… again or use Take Control.", true)
+      if (older) loginNote("login-older", older, true)
+      loadLoginSettings()
+      if (loginRowsComputerId) loadLoginRows(loginRowsComputerId)
+    } else if (op === "login-remove") {
+      var where = computerLabelFor(route.loginComputer)
+      if (error) { reportError(plain || "ibara couldn't remove the login for " + route.site + " from " + where + ".", "", ""); return }
+      // removed: how many cookies went now (null while queued); deferred: the rest go when its browser next opens.
+      var removedNow = typeof data.removed === "number" && data.removed > 0
+      actionNotice = data.deferred === true && !removedNow ? route.site + " is off the list now. It will be removed from " + where + "'s browser when it next opens."
+        : data.deferred === true ? "Removed part of the login for " + route.site + " from " + where + ". The rest goes when its browser next opens, and the next request for it asks you again."
+        : "Removed the login for " + route.site + " from " + where + ". The next request for it asks you again."
+      loadLoginSettings()
+      if (loginRowsComputerId) loadLoginRows(loginRowsComputerId)
+    } else if (op === "login-sync") {
+      if (error) { reportError(plain || "ibara couldn't sync your logins.", "", ""); return }
+      var plan = { sites: Math.max(0, Math.floor(Number(data.sites) || 0)), computers: Math.max(0, Math.floor(Number(data.computers) || 0)),
+        signedOut: (Array.isArray(data.signed_out) ? data.signed_out : []).map(StatusModel.loginSite).filter(function(s) { return s !== "" }),
+        older: Array.isArray(data.older) ? data.older.map(String) : [] }
+      if (route.dryRun) { loginSyncPlanned(plan); return }
+      actionNotice = "Synced your logins: " + (plan.sites === 1 ? "1 site is" : plan.sites + " sites are") + " Allowed on all " + (plan.computers === 1 ? "1 computer" : plan.computers + " computers") + " now."
+      var olderSync = olderLoginWords(plan.older)
+      if (olderSync) loginNote("login-older", olderSync, true)
+      var unknownSync = (Array.isArray(data.unknown) ? data.unknown : []).map(function(id) { return computerLabelFor(String(id)) })
+      if (unknownSync.length) loginNote("login-sync-unknown", "Couldn't confirm the logins were written on " + StatusModel.listWords(unknownSync) + ". Try Sync Logins again or use Take Control.", true)
+      loadLoginSettings()
+      if (loginRowsComputerId) loadLoginRows(loginRowsComputerId)
+    }
+  }
+  // One desktop notification per new login request, on the computer that answers it: Share and
+  // Don't Share (for every site it names). While no computer shares, it says where to turn
+  // sharing on; where another computer shares, it asks there, not here.
+  function notifyLogins() {
+    if (!consoleBool("approval_notifications", true) || !loginSettings) return
+    var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
+    for (var i = 0; i < logins.length; i++) {
+      var item = logins[i]
+      if (seen[item.ref]) continue
+      seen[item.ref] = true
+      fresh = true
+      if (loginSourceElsewhere(item)) continue
+      var name = item.label || computerLabelFor(item.computer_id)
+      var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name, login: true })
+      var sites = item.login.sites.map(function(s) { return s.site }).join(", ")
+      var actions = loginSettings.enabled ? ["-A", "share=Share", "-A", "decline=Don't Share"] : ["-A", "open=Open Console"]
+      var body = StatusModel.requestNoticeBody(item, name, sessions[item.computer_id], "Use your logins for " + sites)
+        + (loginSettings.enabled ? "" : "\nLogin sharing is off. Open Console to turn it on.")
+      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "critical", "-t", "0"].concat(actions, [name + " needs your approval", body])
+      notice.running = true
+      notices[item.ref] = notice
+    }
+    if (fresh) { noticedApprovals = seen; approvalNotices = notices }
   }
 
   // ---- Pause and Resume a computer's agents. Either can be undone by the other, so each happens
@@ -3217,6 +3550,8 @@ Item {
       sendNextDrop(id)
     } else if (op === "operator-file-send" && route.drop) {
       droppedFileSettled(id, route.pin, error ? null : data, error ? plain : "")
+    } else if (op.indexOf("login-") === 0) {
+      consumeLogin(route, data, error, plain)
     }
   }
   function consumeSettings(route, computerId, payload, error, message) {
@@ -3641,6 +3976,9 @@ Item {
         selectedTaskDetailRef = request.ref
         selectedTaskDetailObservedAt = String(parsed.observed_at || "")
         selectedTaskLoading = false
+        var taskErrors = Object.assign({}, readErrors)
+        delete taskErrors.task
+        readErrors = taskErrors
       }
       else if (kind === "procedure" && request.ref === selectedProcedureRef) {
         var procedure = result.procedure || result
@@ -3811,6 +4149,7 @@ Item {
     refresh()
     loadConsoleSettings()
     loadAttention()
+    loadLoginSettings()
   }
   Component.onDestruction: ServiceBridge.clear(root)
 
@@ -3937,6 +4276,10 @@ Item {
       id: notice
       property string ref: ""
       property string computerId: ""
+      // A login request's notification answers Share or Don't Share.
+      property bool login: false
+      property bool question: false
+      property var options: []
       property string label: ""
       property string noticeId: ""
       property bool answered: false

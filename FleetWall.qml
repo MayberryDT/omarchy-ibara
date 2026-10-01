@@ -134,7 +134,7 @@ Item {
   onEmptyChanged: if (visible && loaded) Qt.callLater(focusDefault)
 
   // The wall's order changes in place: a computer leaving is removed, and one that moves is moved,
-  // so the cards glide to their new places (the grid's move and displaced transitions).
+  // so the cards glide to their new places (each card's glide, in the grid's delegate).
   ListModel { id: wallIds }
   function syncWallIds() {
     var ids = visibleComputers.map(function(c) { return String(c.computer_id) })
@@ -201,7 +201,10 @@ Item {
         ids.push(String(visibleComputers[i].computer_id))
     service.setVisibleComputerIds(ids, large)
   }
-  onVisibleComputersChanged: { syncWallIds(); publishVisibility() }
+  // After the card size and columns follow the new list, never before: syncWallIds lays the grid
+  // out at once, and a card still gliding or fading in keeps the place it was given then, so the
+  // old size's places would leave the new cards stacked on each other.
+  onVisibleComputersChanged: { Qt.callLater(syncWallIds); publishVisibility() }
   onVisibleChanged: { publishVisibility(); reload() }
   onWidthChanged: publishVisibility()
   onColumnsChanged: publishVisibility()
@@ -344,9 +347,14 @@ Item {
             blocked: root.updateAllBlocked !== "", reason: root.updateAllBlocked },
           { id: "update_omarchy", label: root.updateAllAction === "update_omarchy" ? "Updating Omarchy…" : "Update Omarchy on All…",
             blocked: root.updateAllBlocked !== "", reason: root.updateAllBlocked }
-        ]
+        ].concat(root.service && root.service.loginSettings ? [
+          // Sync Logins…: every site Allowed on any computer becomes Allowed for All Computers, after a confirmation.
+          { id: "sync_logins", label: root.service.busy["login-sync"] ? "Syncing Logins…" : "Sync Logins…",
+            blocked: !root.service.loginSettings.enabled || !!root.service.busy["login-sync"],
+            reason: !root.service.loginSettings.enabled ? "Turn on login sharing in Settings under Logins first." : "ibara is syncing them now." }] : [])
         onTriggered: id => {
           if (id === "theme" && root.service) root.service.applyThemeToFleet()
+          else if (id === "sync_logins" && root.host) root.host.planSyncLogins(fleetActions.button)
           else if (root.host) root.host.confirmUpdateAll(id, fleetActions.button)
         }
       }
@@ -472,17 +480,35 @@ Item {
       onContentYChanged: root.publishVisibility()
       Keys.onReturnPressed: root.openCurrent()
       Keys.onEnterPressed: root.openCurrent()
-      // A new order glides: moved cards and the ones they displace slide to their places.
-      move: Transition { NumberAnimation { properties: "x,y"; duration: 550; easing.type: Easing.InOutCubic } }
-      displaced: Transition {
-        NumberAnimation { properties: "x,y"; duration: 550; easing.type: Easing.InOutCubic }
-        NumberAnimation { property: "opacity"; to: 1; duration: 150 }
-      }
-      add: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 300; easing.type: Easing.OutCubic } }
+      // No add, move or displaced transitions: while one runs, the view drops any new place it
+      // gives that card, so a size change then (a filter, the window settling) would leave the
+      // cards stacked. Each card fades in and glides to a new place by itself instead.
       delegate: Item {
         id: cell
         width: grid.cellWidth
         height: grid.cellHeight
+        GridView.onAdd: fadeIn.start()
+        NumberAnimation { id: fadeIn; target: cell; property: "opacity"; from: 0; to: 1; duration: 300; easing.type: Easing.OutCubic }
+        // A new order glides: a card the view puts in a new place is drawn where it was, then slides there.
+        property real placedX: NaN
+        property real placedY: NaN
+        function glideFrom() {
+          if (!isNaN(placedX)) {
+            glide.x += placedX - x
+            glide.y += placedY - y
+            glideAnim.restart()
+          }
+          placedX = x
+          placedY = y
+        }
+        onXChanged: glideFrom()
+        onYChanged: glideFrom()
+        transform: Translate { id: glide }
+        ParallelAnimation {
+          id: glideAnim
+          NumberAnimation { target: glide; property: "x"; to: 0; duration: 550; easing.type: Easing.InOutCubic }
+          NumberAnimation { target: glide; property: "y"; to: 0; duration: 550; easing.type: Easing.InOutCubic }
+        }
         readonly property string computerId: String(model.computerId)
         readonly property var computer: root.computerById(computerId)
         readonly property string fleetState: root.tokens.stateOf(computer)
@@ -520,7 +546,11 @@ Item {
           else { sweepClock.interval = delay; sweepClock.restart() }
         }
         Timer { id: sweepClock; onTriggered: cell.shownState = cell.fleetState }
-        Component.onCompleted: shownState = fleetState
+        // The view places a new card just after making it; that first place doesn't glide.
+        Component.onCompleted: {
+          shownState = fleetState
+          Qt.callLater(() => { if (isNaN(cell.placedX)) { cell.placedX = cell.x; cell.placedY = cell.y } })
+        }
         onFleetStateChanged: root.noteStateChange(cell)
         // An agent's first connection lights up the card it can use, once.
         Connections {
@@ -611,6 +641,7 @@ Item {
                 Copy {
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.tokens.stateLabel(cell.shownState, cell.computer)
+                  color: root.tokens.textTint(root.tokens.stateColor(cell.shownState))
                   font.pixelSize: Style.font.bodySmall
                 }
               }
@@ -771,7 +802,7 @@ Item {
                 width: parent.width - Style.space(16)
                 anchors.verticalCenter: parent.verticalCenter
                 text: cell.computer && cell.computer.needs_person ? String(cell.computer.needs_person.message) : ""
-                color: Color.urgent
+                color: root.tokens.textTint(root.tokens.attentionColor)
                 font.pixelSize: Style.font.bodySmall
                 maximumLineCount: 3
                 elide: Text.ElideRight
@@ -824,7 +855,7 @@ Item {
               anchors.baseline: nameText.baseline
               width: Math.min(implicitWidth, parent.width * 0.5)
               text: root.tokens.actor(cell.computer)
-              dimmed: true
+              color: root.tokens.foreground
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.NoWrap
               elide: Text.ElideRight
@@ -837,8 +868,10 @@ Item {
               anchors.topMargin: Style.space(3)
               width: parent.width
               rolls: stepText !== ""
-              text: stepText || root.tokens.activity(cell.computer, root.service ? root.service.nowMs : 0)
-              color: stepText ? root.tokens.stateColor("working") : cell.fleetState === "attention" ? Color.urgent : Qt.alpha(Color.popups.text, 0.72)
+              textFormat: Text.StyledText
+              accessibleText: stepText || root.tokens.activity(cell.computer, root.service ? root.service.nowMs : 0)
+              text: stepText ? root.tokens.stepMarkup(step, false) : root.tokens.activityMarkup(cell.computer, root.service ? root.service.nowMs : 0)
+              color: root.tokens.foreground
               size: Style.font.bodySmall
             }
           }

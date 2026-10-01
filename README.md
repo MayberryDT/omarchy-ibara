@@ -13,15 +13,17 @@ The console lives in Omarchy's bar: one glance tells you whether anything needs 
 
 The plugin has 3 parts.
 
-- The bar shows the ibara mark and one small square in the color of the fleet's most urgent state: red when a computer needs you, purple while you control one, blue while agents work (cyan, or another theme color, in a theme whose blue is hard to tell from its purple). When approvals, agents' questions or computers need you, it shows how many instead. Whenever it is red, the console says why.
+- The bar shows the ibara mark and one small square in the color of the fleet's most urgent state: red when a computer needs you, purple while you control one, blue while agents work (cyan, or another theme color, in a theme whose blue is hard to tell from its purple). When approvals, login requests, agents' questions or computers need you, it shows how many instead. Whenever it is red, the console says why.
 - The quick panel opens when you click the mark while nothing needs you. It counts your computers by state, lists up to 5 of them, the ones that need attention or are in use first, and has Open Console. When something needs you, the click opens it in the console instead.
 - The console opens when you right-click the mark. It starts on the fleet wall, with every computer as a live card, attention first.
 
 <!-- Screenshot: the bar mark with a count, and the quick panel open under it. -->
 
-Choose a computer to see it up close. Its page has 6 tabs:
+Choose a computer to see it up close. Its page has 8 tabs:
 
 - Screen: the live screen, what is running and this session's files
+- Windows: its workspaces and windows, to close or move what an agent left behind
+- Logins: the sites it may sign in to with your logins, each Allowed, Ask First or Denied, with Share With… and Remove
 - Activity: agent tasks step by step, with before-and-after pictures and their checks
 - Files: send files, follow transfers and collect what agents made
 - Access: who may watch, send files, take control, run agent tasks and administer, each Allowed, Ask First or Denied
@@ -37,6 +39,8 @@ From the console you can also:
 - take control of a computer in a viewer, and hand it back
 - copy the one prompt that connects any agent, under Connect an Agent
 - approve or deny what agents ask to do, from the console or from the notification
+- answer an agent's question from its notification buttons; free-text questions offer Open Console
+- let agents use your logins, one site at a time and only when you allow it, from your own browser
 - see what happened while you were away, one line per computer
 
 <!-- Screenshot: Take Control, the viewer window with its "Keys → …" tag. -->
@@ -44,6 +48,8 @@ From the console you can also:
 <!-- Screenshot: Share This Computer with a new invite code. -->
 
 Every shape is square, every color comes from your Omarchy theme, and switching themes recolors everything at once.
+
+Approval, login and question notifications show the agent, computer and request on separate lines. They close when answered elsewhere. Desktop buttons use the same operator checks as the console. A notification daemon must display actions; Tyler's inbox does, with toasts off and waiting requests lighting the chip during automatic DND.
 
 ## Install
 

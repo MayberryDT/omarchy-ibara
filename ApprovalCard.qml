@@ -20,6 +20,7 @@ Toast {
   // from fleet-attention (StatusModel.attentionView): `summary` is plain words, `facts` the
   // Details as [{ label, value }], `request` the request as the computer sent it.
   property var item: null
+  readonly property Tokens tokens: Tokens {}
   readonly property bool stopAsking: !!item && item.stopAsking === true
   readonly property bool canAlwaysAllow: !!item && !stopAsking && String(item.effect || "") !== ""
   // The quick panel: A, D, Shift+A and I beside the first, and a shorter Details box.
@@ -70,7 +71,7 @@ Toast {
       width: Math.min(implicitWidth, parent.width - (askedText.visible ? askedText.implicitWidth + parent.spacing : 0))
       text: root.heading
       font.bold: true
-      color: Color.urgent
+      color: root.tokens.textTint(root.tokens.attentionColor)
       wrapMode: Text.NoWrap
       elide: Text.ElideRight
     }
@@ -79,7 +80,7 @@ Toast {
       // The quick panel is narrow: the heading has the line to itself.
       visible: text !== "" && !root.compact
       text: root.unreachable ? "not answering right now" : root.asked
-      dimmed: true
+      color: root.unreachable ? root.tokens.textTint(root.tokens.pausedColor) : root.tokens.dim
       font.pixelSize: Style.font.bodySmall
       anchors.baseline: headingText.baseline
       wrapMode: Text.NoWrap
@@ -92,7 +93,7 @@ Toast {
     text: root.summary
     font.pixelSize: root.compact ? Style.font.bodySmall : Style.font.body
   }
-  Copy { visible: root.unreachable; width: parent.width; text: root.unreachableReason; dimmed: true; font.pixelSize: Style.font.bodySmall }
+  Copy { visible: root.unreachable; width: parent.width; text: root.unreachableReason; color: root.tokens.textTint(root.tokens.pausedColor); font.pixelSize: Style.font.bodySmall }
   // Details: what the agent asks for, one labeled line each, in a box that scrolls rather than
   // push the answers out of the toast.
   Flickable {
@@ -119,7 +120,7 @@ Toast {
           width: factsColumn.width
           height: Math.max(factLabel.implicitHeight, factValue.implicitHeight)
           Copy { id: factLabel; width: Style.space(96); text: modelData.label; dimmed: true; font.pixelSize: Style.font.bodySmall }
-          Copy { id: factValue; x: Style.space(104); width: parent.width - x; text: modelData.value; font.pixelSize: Style.font.bodySmall; wrapMode: Text.WrapAtWordBoundaryOrAnywhere }
+          Copy { id: factValue; x: Style.space(104); width: parent.width - x; textFormat: Text.StyledText; text: root.tokens.detailMarkup(modelData.label, modelData.value, root.item ? root.item.effect : ""); font.pixelSize: Style.font.bodySmall; wrapMode: Text.WrapAtWordBoundaryOrAnywhere }
         }
       }
       Copy {

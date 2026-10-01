@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'StatusModel.js'), 'utf8').replace('.pragma library', '');
 const context = { console };
 vm.createContext(context);
-vm.runInContext(source + '\nthis.StatusModel = { clip, titleCase, parseEnvelope, taskTitle, accessDenied, evidenceLines, procedureLines, fleetState, fleetStateLabel, fleetActor, healthLines, fleetCounts, activityLine, decorateSession, isoMs, plainError, awayView, attentionView, approvalNoticeBody, standingToasts, toastLayout, needsYouView, problemSince, lastingProblems, pauseAction, whoCanUse, peopleAndAgents, PROBLEM_AFTER_MS };', context);
+vm.runInContext(source + '\nthis.StatusModel = { clip, titleCase, parseEnvelope, taskTitle, taskRuns, accessDenied, evidenceLines, procedureLines, fleetState, fleetStateLabel, fleetActor, healthLines, fleetCounts, activityLine, decorateSession, isoMs, plainError, awayView, attentionView, approvalNoticeBody, standingToasts, toastLayout, needsYouView, problemSince, lastingProblems, pauseAction, whoCanUse, peopleAndAgents, loginDecisions, loginAnswerWords, loginRejectedFresh, loginRowsView, PROBLEM_AFTER_MS };', context);
 const M = context.StatusModel;
 
 test('evidence keeps execution, checks, unknown effects and original delivery separate', () => {
@@ -32,6 +32,18 @@ test('current controller projection uses original host identity and does not upg
 
 test('task text stays a plain clipped summary', () => {
   assert.equal(M.taskTitle({ goal: '<b>no html</b>' }).includes('<b>'), true);
+});
+
+// Folding could hide a failed/unknown job between runs, join runs across it, lose the
+// first receipt's identity on refresh, or swallow the latest step of a live task.
+test('command folds stop at failed and unknown jobs and leave the newest live step visible', () => {
+  const run = (id, job_state = 'completed') => ({ operation_ref: id, tool: 'computer_exec',
+    summary: 'run ["printf","hello"]', execution: 'completed', effect: 'local_change', job_state });
+  const old = [run('a'), run('b'), run('c'), run('failed', 'failed'), run('unknown', 'unknown'), run('d'), run('e'), run('f')];
+  const groups = M.taskRuns({ receipts: old.toReversed() });
+  assert.deepEqual(Array.from(groups, g => [g.key, g.fold, g.items.length]), [['a', true, 3], ['failed', false, 1], ['unknown', false, 1], ['d', true, 3]]);
+  const fresh = M.taskRuns({ receipts: [...old, run('g')].toReversed() }, true);
+  assert.deepEqual(Array.from(fresh, g => [g.key, g.fold, g.items.length]), [['a', true, 3], ['failed', false, 1], ['unknown', false, 1], ['d', true, 3], ['g', false, 1]]);
 });
 
 // What an approval's card and notification show. Failure cases:
@@ -63,7 +75,7 @@ test('Details say what, who, where, the page and the window in words; Copy Reque
     where: { app: 'Chromium', page: 'localhost:8080/signup', window_title: 'Sign up' } };
   const [item] = M.attentionView(approvalItem({ summary, details }));
   assert.equal(item.summary, summary);
-  assert.equal(M.approvalNoticeBody(item), summary);
+  assert.equal(M.approvalNoticeBody(item), 'Agent: codex@vesper\nComputer: Vesper\nPress Return, which sends something on localhost:8080/signup');
   assert.deepEqual(factLines(item), ['Who: codex@vesper', 'What: Press Return, which sends something', 'Where: Chromium on Vesper',
     'Page: localhost:8080/signup', 'Window title: Sign up', 'Task: Sign up']);
   assert.deepEqual(JSON.parse(item.request), details);
@@ -499,4 +511,68 @@ test('health says how busy a computer is from its load per processor', () => {
   assert.equal(busy({ load: 0.3 }), 'Busy: light');
   assert.equal(busy({ load: 3 }), null);
   assert.ok(M.healthLines({ uptime_s: 86400 + 5 }).includes('On for 1 day'));
+});
+
+// A login request (attention kind `login`) as the console reads it. Failure cases:
+// 1. A request with no site a person can read shows as an empty approval, or a repeated or
+//    malformed site (a URL, a path) is offered to share.
+// 2. A two-site sign-in names a site as coming "through" itself.
+// 3. A login request turns into a "needs you" toast, or waits behind "+N more".
+test('a login request lists each site once, with the site it signs in through, and waits for an answer', () => {
+  const item = (sites, extra = {}) => ({ items: [{ computer_id: 'fictional-03', label: 'Birch', ref: 'att_l0', kind: 'login', at: '2026-09-30T10:00:00Z',
+    summary: 'codex@relay, working on “File Q3 estimated tax” on Birch, wants your logins for 3 sites',
+    details: { agent: 'codex@relay', task: { task_ref: 'task_1', goal: 'File Q3 estimated tax' }, sites, page: 'https://sa.www4.irs.gov/ola/', own: true, source_label: 'Studio', ...extra } }] });
+  const [login] = M.attentionView(item([{ site: 'IRS.gov', via: 'id.me' }, { site: 'id.me', via: 'id.me' }, { site: 'irs.gov' }, { site: 'https://evil.example/x' }, { site: 'oktap.tax.ok.gov' }]));
+  assert.deepEqual(JSON.parse(JSON.stringify(login.login.sites)), [{ site: 'irs.gov', via: 'id.me' }, { site: 'id.me', via: '' }, { site: 'oktap.tax.ok.gov', via: '' }]);
+  assert.equal(login.agent, 'codex@relay');
+  assert.equal(M.attentionView(item([{ site: 'not a site' }])).length, 0);
+  assert.equal(M.needsYouView([login], [], {}).length, 0);
+  assert.deepEqual(Array.from(M.standingToasts({ route: 'fleet', approvals: [{ ref: 'att_1' }], logins: [login], questions: [{ ref: 'att_q' }] }), t => t.key),
+    ['approval:att_1', 'login:att_l0', 'question:att_q']);
+  const layout = M.toastLayout(['message', 'message', 'login', 'login-setup', 'message'], 3);
+  assert.deepEqual([Array.from(layout.shown, s => s ? 1 : 0).join(''), layout.hidden], ['00111', 2]);
+});
+
+// One answer for the whole request. Failure cases: an unticked site is shared anyway, or Don't
+// Share leaves a ticked site shared.
+test('an answer gives the ticked sites the choice and every other site Don\'t Share', () => {
+  const sites = [{ site: 'irs.gov' }, { site: 'id.me' }, { site: 'oktap.tax.ok.gov' }];
+  assert.deepEqual({ ...M.loginDecisions(sites, { 'id.me': true }, 'share_all') }, { 'irs.gov': 'share_all', 'id.me': 'decline', 'oktap.tax.ok.gov': 'share_all' });
+  assert.deepEqual({ ...M.loginDecisions(sites, {}, 'decline') }, { 'irs.gov': 'decline', 'id.me': 'decline', 'oktap.tax.ok.gov': 'decline' });
+  assert.deepEqual({ ...M.loginDecisions(sites, { 'irs.gov': true }, 'never') }, { 'irs.gov': 'decline', 'id.me': 'never', 'oktap.tax.ok.gov': 'never' });
+});
+
+// What each outcome of an answer leaves. Failure cases: a signed-out site is reported as shared
+// (the request would close and the agent wait forever), a site waiting for the browser or not
+// confirmed is lost among the notes, or an outcome ibara doesn't know is said as something else.
+test('an answer\'s outcomes: shared and refused sites are notes, the rest say what to do', () => {
+  const words = M.loginAnswerWords([{ site: 'irs.gov', outcome: 'shared' }, { site: 'id.me', outcome: 'signed_out_there' }, { site: 'chase.com', outcome: 'denied' },
+    { site: 'usps.com', outcome: 'waiting_for_browser' }, { site: 'sos.ok.gov', outcome: 'unknown' }, { site: 'x.org', outcome: 'exploded' }], 'Brave', 'Birch');
+  assert.equal(words.note, 'Shared your login for irs.gov with Birch. chase.com is never shared now, on any computer.');
+  assert.deepEqual(Array.from(words.signedOut), ['id.me']);
+  assert.match(words.waiting, /^Open Brave to share your login for usps\.com\./);
+  assert.match(words.unknown, /sos\.ok\.gov/);
+  assert.equal(words.off, false);
+  assert.equal(M.loginAnswerWords([{ site: 'irs.gov', outcome: 'sharing_off' }], 'Brave', 'Birch').off, true);
+});
+
+// Sites that rejected a shared login. Failure cases: the same rejection toasts again on every
+// read, or a console just started raises every rejection the daemon still remembers.
+test('a rejected login shows once, and none from before the console started', () => {
+  const since = 1000;
+  const list = [{ computer: 'fictional-03', site: 'id.me', at: 900 }, { computer: 'fictional-03', site: 'id.me', at: 1500 }, { computer: 'fictional-04', site: 'irs.gov', at: 2000 }];
+  const first = M.loginRejectedFresh(list, {}, since);
+  assert.deepEqual(Array.from(first, r => r.key), ['fictional-03|id.me|1500', 'fictional-04|irs.gov|2000']);
+  const seen = Object.fromEntries(first.map(r => [r.key, true]));
+  assert.equal(M.loginRejectedFresh(list, seen, since).length, 0);
+  assert.deepEqual(Array.from(M.loginRejectedFresh(list.concat([{ computer: 'fictional-03', site: 'id.me', at: 2600 }]), seen, since), r => r.key), ['fictional-03|id.me|2600']);
+});
+
+// A computer's Logins tab rows. Failure case: a row with a rule ibara doesn't know is offered
+// in the menu, or an unknown last result reads as Worked, or a result shows a date it doesn't have.
+test('login rows keep known rules and results with their dates, sorted by site', () => {
+  const view = M.loginRowsView({ rows: [{ site: 'irs.gov', rule: 'ask', own_rule: 'ask', last_result: 'worked', last_result_at_ms: 7, last_shared_ms: 5 }, { site: 'id.me', rule: 'maybe' },
+    { site: 'github.com', rule: 'allow', all_rule: 'allow', last_result: 'odd', last_result_at_ms: 9 }, { site: 'usps.com', rule: 'ask', last_result: null, last_result_at_ms: null }], denied_all: ['chase.com', 'not a site'] });
+  assert.deepEqual(JSON.parse(JSON.stringify(view.rows.map(r => [r.site, r.rule, r.lastResult, r.lastResultAt]))), [['github.com', 'allow', '', 0], ['irs.gov', 'ask', 'worked', 7], ['usps.com', 'ask', '', 0]]);
+  assert.deepEqual(Array.from(view.deniedAll), ['chase.com']);
 });

@@ -56,6 +56,15 @@ Item {
     else if (taskAge) parts.push(taskAge)
     return parts.join(" · ")
   }
+  readonly property string nowSummaryMarkup: {
+    if (!task) return tokens.ink(idleLine, tokens.textTint(tokens.stateColor(fleetState)))
+    var parts = [tokens.ink(StatusModel.clip(String(task.title || "Untitled task"), 120), tokens.foreground)]
+    if (task.principal) parts.push(tokens.ink(task.principal, tokens.foreground))
+    var state = String(task.state || "")
+    if (state && ["active", "running"].indexOf(state) === -1) parts.push(tokens.ink(tokens.sentence(state).toLowerCase(), tokens.textTint(tokens.statusColor(state))))
+    else if (taskAge) parts.push(tokens.ink(taskAge, tokens.dim))
+    return parts.join(tokens.ink(" · ", tokens.dim))
+  }
   readonly property string accessStatus: service && service.readErrors.access ? StatusModel.clip(service.readErrors.access, 160)
     : !service || !service.accessTable || service.readPending("access") ? "Checking…" : "No one else"
   readonly property string filesSummary: {
@@ -95,6 +104,10 @@ Item {
   // One step on one line: its time, what it did, and a word when it failed or needs review.
   function stepProblem(step) {
     if (!step) return ""
+    if (step.job_state === "unknown") return "needs review"
+    if (["failed", "cancelled", "canceled", "interrupted", "timed_out"].indexOf(step.job_state) !== -1) return "failed"
+    if (step.job_state === "running" || (step.execution === "running" && step.job_state !== "completed")) return "in progress"
+    if (step.job_state === "completed" && step.execution === "running") return ""
     if (step.dependency_state === "unresolved" || step.requires_reconciliation || step.execution === "unknown" || step.effect === "unknown") return "needs review"
     return step.error ? "failed" : ""
   }
@@ -135,6 +148,7 @@ Item {
     property string key: ""
     property string title: ""
     property string summary: ""
+    property string summaryMarkup: root.tokens.escapeText(summary)
     property bool summaryUrgent: false
     property alias body: bodyLoader.sourceComponent
     readonly property bool open: root.openSection === key
@@ -187,9 +201,11 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: Style.space(6)
         anchors.verticalCenter: parent.verticalCenter
-        text: section.summary
+        textFormat: Text.StyledText
+        text: section.summaryMarkup
+        Accessible.name: section.summary
         dimmed: !section.summaryUrgent
-        color: section.summaryUrgent ? Color.urgent : Qt.alpha(Color.popups.text, 0.64)
+        color: root.tokens.textTint(section.summaryUrgent ? root.tokens.attentionColor : section.key === "now" ? root.tokens.stateColor(root.fleetState) : root.tokens.dim)
         wrapMode: Text.NoWrap
         elide: Text.ElideRight
       }
@@ -241,7 +257,7 @@ Item {
     Text {
       anchors.centerIn: parent
       text: root.markGlyph(markItem.mark.key)
-      color: markItem.mark.rule === "deny" ? Qt.alpha(Color.popups.text, 0.18) : Color.popups.text
+      color: markItem.mark.rule === "deny" ? root.tokens.faint : root.tokens.textTint(root.tokens.ruleColor(markItem.mark.rule))
       font.family: Style.font.family
       font.pixelSize: Style.font.body + Style.space(1)
       Accessible.ignored: true
@@ -252,7 +268,7 @@ Item {
       anchors.top: parent.top
       anchors.topMargin: -Style.space(2)
       text: "?"
-      color: Color.popups.text
+      color: root.tokens.textTint(root.tokens.pausedColor)
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       font.bold: true
@@ -320,6 +336,7 @@ Item {
         Copy {
           anchors.verticalCenter: parent.verticalCenter
           text: root.tokens.stateLabel(root.fleetState, root.computer)
+          color: root.tokens.textTint(root.tokens.stateColor(root.fleetState))
           font.pixelSize: Style.font.bodySmall
         }
       }
@@ -371,12 +388,14 @@ Item {
       key: "now"
       title: "Now"
       summary: root.nowSummary
+      summaryMarkup: root.nowSummaryMarkup
       body: Component {
         Column {
           spacing: Style.space(4)
           Copy {
             width: parent.width
             text: root.task ? StatusModel.clip(String(root.task.title || "Untitled task"), 240) : root.idleLine
+            color: root.task ? root.tokens.foreground : root.tokens.textTint(root.tokens.stateColor(root.fleetState))
             font.bold: !!root.task
             maximumLineCount: 3
             elide: Text.ElideRight
@@ -388,13 +407,13 @@ Item {
               if (!root.task) return ""
               var parts = []
               var who = root.task.principal ? "agent from " + String(root.task.principal) : root.tokens.actor(root.computer)
-              if (who) parts.push(who)
+              if (who) parts.push(root.tokens.ink(who, root.tokens.foreground))
               var started = root.tokens.clockLabel(root.task.started_at)
-              if (started) parts.push("started " + started)
-              if (root.taskAge) parts.push(root.taskAge)
-              return parts.join(" · ")
+              if (started) parts.push(root.tokens.ink("started " + started, root.tokens.dim))
+              if (root.taskAge) parts.push(root.tokens.ink(root.taskAge, root.tokens.dim))
+              return parts.join(root.tokens.ink(" · ", root.tokens.dim))
             }
-            dimmed: true
+            textFormat: Text.StyledText
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.NoWrap
             elide: Text.ElideRight
@@ -405,8 +424,9 @@ Item {
             delegate: Copy {
               required property var modelData
               width: parent.width
-              text: root.stepLine(modelData)
-              color: root.stepProblem(modelData) ? Color.urgent : Color.popups.text
+              textFormat: Text.StyledText
+              text: root.tokens.stepMarkup(modelData, true)
+              Accessible.name: root.stepLine(modelData)
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.NoWrap
               elide: Text.ElideRight
@@ -416,7 +436,7 @@ Item {
             visible: !!root.task && root.steps.length === 0
             width: parent.width
             text: root.stepsLoading ? "Checking…" : root.service && root.service.readErrors.task ? StatusModel.clip(root.service.readErrors.task, 160) : "No steps recorded yet"
-            dimmed: true
+            color: root.service && root.service.readErrors.task ? root.tokens.textTint(root.tokens.attentionColor) : root.tokens.dim
             font.pixelSize: Style.font.bodySmall
           }
           ShowAll { tab: "activity"; tabLabel: "Activity" }
@@ -471,7 +491,7 @@ Item {
             visible: root.accessRows.length === 0
             width: parent.width
             text: root.accessStatus
-            color: root.service && root.service.readErrors.access ? Color.urgent : Qt.alpha(Color.popups.text, 0.64)
+            color: root.service && root.service.readErrors.access ? root.tokens.textTint(root.tokens.attentionColor) : root.tokens.dim
             font.pixelSize: Style.font.bodySmall
           }
           Copy {
@@ -509,7 +529,7 @@ Item {
               required property var modelData
               width: parent.width
               text: root.fileLine(modelData)
-              color: modelData.state === "failed" ? Color.urgent : Color.popups.text
+              color: root.tokens.textTint(modelData.state === "failed" ? root.tokens.attentionColor : modelData.state === "verified" ? root.tokens.readyColor : root.tokens.workingColor)
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.NoWrap
               elide: Text.ElideMiddle

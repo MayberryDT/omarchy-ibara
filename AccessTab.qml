@@ -221,9 +221,10 @@ Item {
     Repeater {
       model: root.access ? Object.keys(root.access.grants).filter(function(k) { return root.access.grants[k].subject === detail.row.subject }).map(function(k) {
         var g = root.access.grants[k]
-        return root.capabilityLabel(g.capability) + ": " + root.ruleLabel(g.rule) + (g.expires_at ? " until " + (root.tokens.clockLabel(g.expires_at) || String(g.expires_at)) : "")
+        return root.tokens.ink(root.capabilityLabel(g.capability) + ": ", root.tokens.dim) + root.tokens.ink(root.ruleLabel(g.rule), root.tokens.textTint(root.tokens.ruleColor(g.rule))) +
+          (g.expires_at ? root.tokens.ink(" until " + (root.tokens.clockLabel(g.expires_at) || String(g.expires_at)), root.tokens.dim) : "")
       }) : []
-      delegate: Copy { width: detail.width; text: String(modelData); dimmed: true; font.pixelSize: Style.font.bodySmall }
+      delegate: Copy { width: detail.width; textFormat: Text.StyledText; text: String(modelData); font.pixelSize: Style.font.bodySmall }
     }
     // Ask before it sends, spends or deletes: its own switch, and the way back to
     // the computer's rules.
@@ -285,7 +286,7 @@ Item {
     Copy {
       visible: !detail.owner
       width: parent.width
-      text: "Agent task steps, by kind. For Send, Spend and Destructive, Ask First set for an agent or for its computer wins over Allowed, since any agent on a computer can use another's name. A kind neither sets follows Ask before agents send, spend or delete on this computer's Settings tab (now " + (root.computerAsks ? "on" : "off") + ") for agents from your own computers; agents from someone else's computer ask. Denied always wins."
+      text: "Agent task steps, by kind.\nFor Send, Spend and Destructive, Ask First set for an agent or for its computer wins over Allowed, since any agent on a computer can use another's name.\nA kind neither sets follows Ask before agents send, spend or delete on this computer's Settings tab (now " + (root.computerAsks ? "on" : "off") + ") for agents from your own computers; agents from someone else's computer ask.\nDenied always wins."
       font.pixelSize: Style.font.bodySmall
     }
     Flow {
@@ -297,7 +298,7 @@ Item {
         delegate: Row {
           required property var modelData
           spacing: Style.space(6)
-          Copy { anchors.verticalCenter: parent.verticalCenter; text: modelData.label; font.pixelSize: Style.font.bodySmall; wrapMode: Text.NoWrap }
+          Copy { anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: root.tokens.textTint(root.tokens.effectColor(modelData.key)); font.pixelSize: Style.font.bodySmall; wrapMode: Text.NoWrap }
           RuleMenu {
             anchors.verticalCenter: parent.verticalCenter
             rule: String(detail.row.effects[modelData.key] || "deny")
@@ -364,7 +365,7 @@ Item {
         refreshing: !!root.service && root.service.readPending("access")
         nowMs: root.service ? root.service.nowMs : Date.now()
       }
-      Copy { width: parent.width; visible: !root.access; text: root.service && root.service.readErrors.access || "Loading access…"; color: Color.urgent }
+      Copy { width: parent.width; visible: !root.access; text: root.service && root.service.readErrors.access || "Loading access…"; color: root.tokens.textTint(root.service && root.service.readErrors.access ? root.tokens.attentionColor : root.tokens.workingColor) }
 
       // The table: a header row, then one compact row per identity.
       Column {
@@ -420,7 +421,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     x: Style.spacing.controlPaddingX - Style.space(2)
                     text: root.ruleLabel(cell.rule)
-                    dimmed: true
+                    color: root.tokens.textTint(root.tokens.ruleColor(cell.rule))
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.NoWrap
                   }

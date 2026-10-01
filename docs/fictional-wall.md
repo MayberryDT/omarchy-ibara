@@ -31,6 +31,7 @@ The fixture daemon reads `control.json` and writes `requests.jsonl` beside its s
 - `deny`, `offline`, `hang` and `revoked` (lists of fictional IDs). `revoked` returns the message the real routes give after the target closes a revoked console's socket.
 - `epoch` (a new controller epoch, as after a target restart) and `session_refused` (fictional IDs whose `operator-session` bootstrap is refused).
 - `late` (`{"computer": ID, "delay_ms": N}`). This sends that computer's next preview late with a solid red frame, sequence 999999, which must never appear.
+- Login sharing: `logins` (`on`, the default, sharing from Brave; `undecided`, `off`, `elsewhere`, `target` or `old`), `login_requests` (agents asking for logins), `login_signed_out`, `login_browser_closed`, `login_unknown` and `login_rejected`, described beside `loginCommand` in `tests/dev-fixture-daemon.mjs`. Offscreen screenshots of every login surface against these come from `.research/login-sharing/console/harness/` in the ibara repository.
 
 Sample the running shell with `tests/wall-load-sample.mjs --target PLUGIN_ID --seconds N --interval MS --out FILE.jsonl`, then summarize with `tests/wall-load-summary.mjs FILE.jsonl [--from MS] [--to MS] [--requests requests.jsonl]`. Ages come from the service's `previewStats` IPC (the frame it is showing), CPU from the Quickshell process tree. This measures the console side's load with modeled network and target time; actual target capture cost is measured separately against the real computer.
 

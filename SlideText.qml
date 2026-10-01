@@ -6,6 +6,8 @@ import qs.Commons
 Item {
   id: root
   property string text: ""
+  property int textFormat: Text.PlainText
+  property string accessibleText: text
   property color color: Color.popups.text
   property int size: Style.font.body
   property bool bold: false
@@ -15,7 +17,7 @@ Item {
   implicitHeight: cur.implicitHeight
   clip: true
   Accessible.role: Accessible.StaticText
-  Accessible.name: text
+  Accessible.name: accessibleText
   Text {
     id: old
     width: root.width
@@ -23,7 +25,7 @@ Item {
     font.family: Style.font.family
     font.pixelSize: root.size
     font.bold: root.bold
-    textFormat: Text.PlainText
+    textFormat: root.textFormat
     elide: Text.ElideRight
     opacity: 0
     Accessible.ignored: true
@@ -35,7 +37,7 @@ Item {
     font.family: Style.font.family
     font.pixelSize: root.size
     font.bold: root.bold
-    textFormat: Text.PlainText
+    textFormat: root.textFormat
     elide: Text.ElideRight
     Accessible.ignored: true
   }

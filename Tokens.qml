@@ -37,6 +37,48 @@ QtObject {
   readonly property FontMetrics bodyMetrics: FontMetrics { font.family: Style.font.family; font.pixelSize: Style.font.body }
   readonly property real proseWidth: Math.ceil(bodyMetrics.averageCharacterWidth * 90)
 
+  // The selected Activity timeline's tint keeps theme colors readable as text.
+  // Use raw colors for bands/marks; use this for colored words on every surface.
+  function textTint(color) { return Qt.tint(color, Qt.alpha(foreground, 0.38)) }
+  function ruleColor(rule) { return rule === "allow" ? readyColor : rule === "ask" ? pausedColor : attentionColor }
+  function statusColor(state) {
+    if (["ready", "completed", "complete", "finished", "done", "applied", "verified", "satisfied", "worked", "approved", "allow", "settled", "light", "fresh", "applicable"].indexOf(state) >= 0) return readyColor
+    if (["working", "active", "running", "applying", "loading", "saving", "sharing"].indexOf(state) >= 0) return workingColor
+    if (["attention", "failed", "interrupted", "cancelled", "canceled", "deny", "denied", "site_rejected", "heavy", "contradicted", "unsettled"].indexOf(state) >= 0) return attentionColor
+    if (["paused", "partial", "candidate", "pending", "ask", "unknown", "expired", "moderate", "unsatisfied", "quarantined", "stale", "not_applicable"].indexOf(state) >= 0) return pausedColor
+    if (["offline", "locked", "connecting", "off", "withdrawn"].indexOf(state) >= 0) return dim
+    return foreground
+  }
+  function effectColor(effect) { return effect === "destructive" ? attentionColor : effect === "send" || effect === "spend" ? pausedColor : accent }
+  function escapeText(value) {
+    return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+  }
+  // Rich text is composed only from escaped values, never from computer-supplied markup.
+  function ink(value, color) { return '<font color="' + color + '">' + escapeText(value) + '</font>' }
+  function labeled(line, valueColor) {
+    var text = String(line || ""), at = text.indexOf(": ")
+    return at < 0 ? ink(text, valueColor || foreground) : ink(text.slice(0, at + 1), dim) + " " + ink(text.slice(at + 2), valueColor || foreground)
+  }
+  function detailMarkup(label, value, effect) {
+    // Approval values are already structured plain words. Only their effect phrases
+    // receive semantic colors; the action itself uses the request's effect.
+    if (label !== "What") return ink(value, detailColor(label, effect))
+    var text = String(value || ""), parts = [], last = 0
+    var words = /\b(sends something|spends money|deletes or overwrites something|sends|deletes)\b/gi, match
+    while ((match = words.exec(text)) !== null) {
+      parts.push(ink(text.slice(last, match.index), textTint(effectColor(effect))))
+      var kind = /^send/i.test(match[0]) ? "send" : /^spend/i.test(match[0]) ? "spend" : "destructive"
+      parts.push(ink(match[0], textTint(effectColor(kind))))
+      last = words.lastIndex
+    }
+    return parts.join("") + ink(text.slice(last), textTint(effectColor(effect)))
+  }
+  function detailColor(label, effect) {
+    if (label === "What" || label === "Effect") return textTint(effectColor(effect))
+    if (/^(Page|Revision|Task ref|Request|Fingerprint|Address)$/i.test(label)) return faint
+    return foreground
+  }
+
   function stateOf(computer) {
     if (!computer) return "offline"
     if (computer.fleet_state) return String(computer.fleet_state)
@@ -103,6 +145,33 @@ QtObject {
   function activity(computer, nowMs) {
     if (!computer) return ""
     return StatusModel.activityLine(computer, nowMs)
+  }
+  function activityMarkup(computer, nowMs) {
+    var parts = activity(computer, nowMs).split(" · "), state = stateOf(computer)
+    var task = computer && computer.active_task
+    var title = task ? StatusModel.clip(task.title, 80) : ""
+    var hasTitle = !!title && parts[0] === title
+    return ink(parts[0], hasTitle ? foreground : textTint(stateColor(state))) + (parts.length > 1
+      ? ink(" · ", dim) + ink(parts.slice(1).join(" · "), hasTitle && state === "attention" ? textTint(attentionColor) : dim) : "")
+  }
+  function technicalMarkup(value) {
+    return escapeText(value).replace(/\b(?:frame|task|computer|job|op|att)_[A-Za-z0-9_-]+\b/g, function(ref) { return ink(ref, faint) })
+  }
+  function stepMarkup(receipt, showTime) {
+    // The fleet's last_step is an already worded summary, not a receipt.
+    // Color its existing action word without adding a second verb.
+    if (receipt && !receipt.tool) {
+      var said = StatusModel.clip(String(receipt.summary || ""), 160), space = said.indexOf(" ")
+      return space < 0 ? ink(said, textTint(workingColor)) : ink(said.slice(0, space), textTint(workingColor)) + " " + technicalMarkup(said.slice(space + 1))
+    }
+    var step = StatusModel.taskStep(receipt), ms = StatusModel.timeMs(step.at)
+    var clock = showTime && isFinite(ms) ? clockLabel(new Date(ms).toISOString()) : ""
+    var kindColor = step.kind === "task" ? humanColor : step.kind === "exec" ? workingColor : accent
+    var effect = receipt && receipt.effect
+    var verbColor = ["send", "spend", "destructive"].indexOf(effect) >= 0 ? effectColor(effect) : kindColor
+    return (clock ? ink(clock + "  ", dim) : "") + ink(step.verb, textTint(verbColor)) +
+      (step.tone !== "ready" ? ink(" · " + step.result, textTint(stateColor(step.tone))) : "") + " " +
+      (step.kind === "exec" ? ink(StatusModel.clip(step.what, 160), foreground) : technicalMarkup(StatusModel.clip(step.what, 160))) + (step.expect ? ink(" · " + StatusModel.clip(step.expect, 160), step.tone === "paused" ? textTint(pausedColor) : dim) : "")
   }
   function frameSource(computer, denied) {
     if (!computer || denied || computer.connection === "unauthorized" || computer.trust_state !== "verified") return ""

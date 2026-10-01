@@ -18,6 +18,7 @@ import "StatusModel.js" as StatusModel
 // Escape closes the focused toast's details, dismisses it, or returns to the page.
 FocusScope {
   id: root
+  readonly property Tokens tokens: Tokens {}
   property var host: null
   // The height the stack may cover: the page under its header.
   property real room: 0
@@ -200,6 +201,9 @@ FocusScope {
           onActiveFocusChanged: if (activeFocus) { root.focusedKey = key; Qt.callLater(root.noteFocusArrival) }
           onLoaded: if (item && item.focusHolds !== undefined) item.focusHolds = Qt.binding(function() { return root.keyboardFocus })
           sourceComponent: kind === "approval" ? approvalToast
+            : kind === "login" ? loginToast
+            : kind === "login-setup" ? loginSetupToast
+            : kind === "login-rejected" ? loginRejectedToast
             : kind === "question" ? questionToast
             : kind === "pair" ? pairToast
             : kind === "need" ? needToast
@@ -233,6 +237,49 @@ FocusScope {
         var list = root.service && Array.isArray(root.service.approvals) ? root.service.approvals : []
         for (var i = 0; i < list.length; i++) if (list[i].ref === ref) return list[i]
         return null
+      }
+    }
+  }
+  // An agent asking for your login to a site.
+  Component {
+    id: loginToast
+    LoginCard {
+      readonly property string refKey: parent ? parent.ref : ""
+      service: root.service
+      host: root.host
+      item: root.service ? root.service.loginByRef(refKey) : null
+      onSettingsWanted: if (root.host) root.host.showSettings()
+    }
+  }
+  Component {
+    id: loginSetupToast
+    LoginSetupCard { host: root.host; service: root.service }
+  }
+  // A site that rejected a shared login: the agent can't sign in there, so a person can with Take Control.
+  Component {
+    id: loginRejectedToast
+    Toast {
+      id: rejected
+      readonly property string key: parent ? parent.key : ""
+      readonly property var entry: root.service && parent ? root.service.loginRejectedByKey(parent.ref) : null
+      readonly property string name: entry && root.service ? root.service.computerLabelFor(entry.computer) : ""
+      edge: Color.urgent
+      tinted: true
+      firstControl: takeButton
+      dismissName: "Dismiss the note about " + (entry ? entry.site : "the site")
+      Accessible.name: rejectedText.text
+      onDismissed: if (root.host) root.host.dismissToast(key)
+      Copy { width: parent.width; text: rejected.entry ? rejected.entry.site + " didn't accept your login on " + rejected.name : ""; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor) }
+      Copy { id: rejectedText; width: parent.width; text: "It still shows its sign-in page, so the agent there can't go on. Take Control to sign in yourself."; font.pixelSize: Style.font.bodySmall }
+      ActionButton {
+        id: takeButton
+        label: "Take Control"
+        role: "primary"
+        size: "small"
+        blocked: !!rejected.entry && !!root.host && root.host.controlBlockedReason(root.host.computerById(rejected.entry.computer)) !== ""
+        disabledReason: rejected.entry && root.host ? root.host.controlBlockedReason(root.host.computerById(rejected.entry.computer)) : ""
+        Accessible.name: "Take control of " + rejected.name + " to sign in to " + (rejected.entry ? rejected.entry.site : "")
+        onClicked: if (!blocked && root.host && rejected.entry) root.host.takeControl(rejected.entry.computer)
       }
     }
   }
@@ -301,7 +348,7 @@ FocusScope {
           anchors.rightMargin: actionButton.visible ? Style.space(8) : 0
           anchors.verticalCenter: parent.verticalCenter
           text: message.words
-          color: message.error ? Color.urgent : Color.popups.text
+          color: message.error ? root.tokens.textTint(root.tokens.attentionColor) : root.tokens.foreground
           font.pixelSize: Style.font.bodySmall
           maximumLineCount: 4
           elide: Text.ElideRight
@@ -353,7 +400,7 @@ FocusScope {
       dismissName: "Put away the note that " + name + " needs you"
       Accessible.name: name + " needs you. " + words
       onDismissed: if (root.host) root.host.dismissToast(key)
-      Copy { width: parent.width; text: need.name + " needs you"; font.bold: true; color: Color.urgent; wrapMode: Text.NoWrap; elide: Text.ElideRight }
+      Copy { width: parent.width; text: need.name + " needs you"; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor); wrapMode: Text.NoWrap; elide: Text.ElideRight }
       Copy { width: parent.width; text: need.words; font.pixelSize: Style.font.bodySmall }
       Row {
         spacing: Style.space(8)
@@ -402,7 +449,7 @@ FocusScope {
       dismissName: "Put away the note about " + name
       Accessible.name: entry ? entry.heading + ". " + entry.body : ""
       onDismissed: if (root.host) root.host.dismissToast(key)
-      Copy { width: parent.width; text: problem.entry ? problem.entry.heading : ""; font.bold: true; color: Color.urgent; wrapMode: Text.NoWrap; elide: Text.ElideRight }
+      Copy { width: parent.width; text: problem.entry ? problem.entry.heading : ""; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor); wrapMode: Text.NoWrap; elide: Text.ElideRight }
       Copy { width: parent.width; text: problem.entry ? problem.entry.body : ""; font.pixelSize: Style.font.bodySmall }
       Row {
         spacing: Style.space(8)
@@ -446,7 +493,7 @@ FocusScope {
       Accessible.role: Accessible.StatusBar
       Accessible.name: words
       onDismissed: if (root.host) root.host.dismissToast(key)
-      Copy { width: parent.width; text: files.words; color: files.failed && !files.going ? Color.urgent : Color.popups.text; font.pixelSize: Style.font.bodySmall; maximumLineCount: 3; elide: Text.ElideRight }
+      Copy { width: parent.width; text: files.words; color: root.tokens.textTint(files.failed && !files.going ? root.tokens.attentionColor : files.going ? root.tokens.workingColor : root.tokens.readyColor); font.pixelSize: Style.font.bodySmall; maximumLineCount: 3; elide: Text.ElideRight }
       Rectangle {
         parent: files
         anchors.bottom: parent.bottom
@@ -498,7 +545,7 @@ FocusScope {
       dismissable: false
       firstControl: startButton.visible ? startButton : copyButton
       Accessible.name: "ibara isn't running on this computer. " + words + (stopped.canStart ? "" : " " + command)
-      Copy { width: parent.width; text: "ibara isn't running on this computer."; font.bold: true; color: Color.urgent }
+      Copy { width: parent.width; text: "ibara isn't running on this computer."; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor) }
       Copy { width: parent.width; text: stopped.words; font.pixelSize: Style.font.bodySmall }
       Row {
         visible: !stopped.canStart

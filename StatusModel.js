@@ -120,6 +120,170 @@ function taskTitle(task) {
   return clip(task.goal || task.task_ref || "Untitled task", 80)
 }
 
+function sentence(value) {
+  var text = String(value || "").replace(/[_-]/g, " ").trim()
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : ""
+}
+
+// Task detail wording, shared by the list, outcome band and oldest-first timeline.
+function taskLive(task) {
+  task = asObject(task)
+  return !!task.live || ["active", "running", "waiting_for_human"].indexOf(task.state) !== -1
+}
+function taskState(task) {
+  task = asObject(task)
+  if (taskLive(task)) return "In progress"
+  var state = task.state || task.completion_outcome || "unknown"
+  if (state === "completed" || state === "complete") return "Finished"
+  if (state === "partial") return "Partly done"
+  if (state === "revoked" || state === "cancelled" || state === "canceled") return "Ended"
+  return sentence(state)
+}
+function taskTone(task) {
+  var state = taskState(task)
+  return state === "In progress" ? "working" : state === "Finished" ? "ready" : state === "Partly done" ? "paused" : "attention"
+}
+function taskProjection(item) {
+  item = asObject(item)
+  var task = asObject(item.task || item)
+  return asObject(item.completion_projection || item.projection || task.completion_projection || task.verification)
+}
+function taskCriteria(item) {
+  var projection = taskProjection(item)
+  return Array.isArray(item && item.criteria) ? item.criteria : Array.isArray(projection.criteria) ? projection.criteria : []
+}
+function taskDeliveries(item) {
+  var projection = taskProjection(item)
+  return Array.isArray(item && item.deliveries) ? item.deliveries : Array.isArray(projection.deliveries) ? projection.deliveries : []
+}
+function taskChecks(item) {
+  var checks = taskCriteria(item)
+  return { total: checks.length, met: checks.filter(function(c) { return c.state === "satisfied" }).length }
+}
+function taskProof(item) {
+  var task = asObject(asObject(item).task || item), proof = taskProjection(item)
+  if (proof.verified_complete === true) return "ibara checked the result"
+  if (!Object.keys(proof).length) return taskLive(task) ? "ibara hasn't checked the result yet" : "ibara didn't check the result"
+  return "ibara couldn't confirm the result"
+}
+function taskCleanup(item) {
+  var proof = taskProjection(item)
+  if (proof.cleanup) return sentence(proof.cleanup)
+  if (proof.cleanup_settled === true) return "Settled"
+  if (proof.cleanup_settled === false) return "Unsettled"
+  return "Not confirmed"
+}
+function taskAgent(task) { return task && task.principal ? "agent from " + String(task.principal) : "" }
+function taskTime(iso) {
+  var date = new Date(iso)
+  return isFinite(date.getTime()) ? [date.getHours(), date.getMinutes(), date.getSeconds()].map(function(n) { return n < 10 ? "0" + n : String(n) }).join(":") : ""
+}
+function taskTimes(task) {
+  task = asObject(task)
+  var start = taskTime(task.created_at), end = taskTime(task.finished_at || task.updated_at)
+  return start ? start + (taskLive(task) ? " to now" : end ? " to " + end : "") : ""
+}
+function taskBandDetail(item, task) {
+  return [taskProof(item), "cleanup " + taskCleanup(item).toLowerCase(), taskAgent(task), taskTimes(task)].filter(Boolean).join(" · ")
+}
+function taskClaim(criterion) {
+  // A Repeater wraps nested lists in Qt array-like model data.
+  var claims = criterion && criterion.claims ? Array.prototype.slice.call(criterion.claims) : []
+  return claims.map(function(c) {
+    var detail = c.detail || asObject(c.assessment).reason
+    return detail ? (c.basis === "automatic" ? "ibara checked: " : "The agent says: ") + String(detail) : ""
+  }).filter(Boolean).join("\n")
+}
+function taskDeliveryTone(delivery) {
+  var state = String(asObject(delivery).state || "pending")
+  return ["verified", "satisfied", "completed", "delivered"].indexOf(state) !== -1 ? "ready"
+    : ["failed", "unknown", "unavailable"].indexOf(state) !== -1 ? "attention" : "paused"
+}
+// Durable references belong in Technical Details, never in a step's visible words.
+function taskPlain(text) { return String(text || "").replace(/\bjob_[A-Za-z0-9_-]+\b/g, "a command").replace(/\b(?:op|operation)_[A-Za-z0-9_-]+\b/g, "a step") }
+function taskStep(receipt) {
+  var r = asObject(receipt), summary = String(r.summary || "")
+  var step = { kind: "act", verb: "Did", what: summary, expect: "", tone: "ready", result: "Done", error: taskPlain(r.error), at: r.created_at,
+    key: String(r.operation_ref || r.request_id || (r.created_at || "") + ":" + (r.tool || "") + ":" + summary) }
+  var job = /^Job \S+ is ([\w-]+)\.$/.exec(summary)
+  var jobState = r.job_state !== undefined && r.job_state !== null ? String(r.job_state) : job ? job[1] : ""
+  if (r.tool === "computer_begin") { step.kind = "task"; step.verb = "Start"; step.what = "Took control of the computer" }
+  else if (r.tool === "computer_finish") { step.kind = "task"; step.verb = "Finish"; step.what = "Released control" }
+  else if (r.tool === "computer_exec") {
+    step.kind = "exec"; step.verb = "Run"; step.what = job ? "A command (not recorded)" : summary; step.result = "Ran"
+    if (/^run \[/.test(summary)) {
+      // The operator's 400-character clip can cut inside an argv JSON string.
+      step.what = summary.slice(4) + "…"
+      var clippedShell = /^\[\s*"(?:[^"\\]*\/)?(?:bash|sh)"\s*,\s*"-l?c"\s*,\s*"((?:[^"\\]|\\[\s\S])*)/.exec(summary.slice(4))
+      if (clippedShell) step.what = clippedShell[1].replace(/\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])/g, function(escape) {
+        return JSON.parse('"' + escape + '"')
+      }) + "…"
+      try {
+        var argv = JSON.parse(summary.slice(4))
+        if (Array.isArray(argv) && argv.length && argv.every(function(a) { return typeof a === "string" })) {
+          var program = argv[0].split("/").pop()
+          var shell = (program === "bash" || program === "sh") && (argv[1] === "-c" || argv[1] === "-lc")
+          step.what = shell && argv.length > 2 ? argv[2] : argv.join(" ")
+        }
+      } catch (e) {} // Keep the readable clipped prefix when JSON is incomplete.
+    }
+    if (jobState === "completed") step.result = "Finished"
+    else if (["running", "pending", "queued", "started"].indexOf(jobState) !== -1) { step.result = "In progress"; step.tone = "working" }
+  } else {
+    var parts = summary.split(" · ")
+    step.what = parts[0]; step.expect = parts.slice(1).join(" · ")
+    var action = /^(click|key|type|scroll|drag|move|launch)\b\s*(.*)$/.exec(step.what)
+    if (action) { step.verb = sentence(action[1]); step.what = action[2] }
+    step.what = step.what.replace(/^e\d+ /, "")
+    if (r.verification === "satisfied") step.result = "Saw it"
+  }
+  if (r.verification === "unsatisfied") { step.tone = "paused"; step.result = "Didn't see it" }
+  var settledJob = ["completed", "failed", "cancelled", "canceled", "interrupted", "timed_out"].indexOf(jobState) !== -1
+  if (!r.error && /^Held for approval/.test(summary)) {
+    step.what = "An action awaiting approval"; step.expect = ""; step.tone = "paused"; step.result = "Waiting for approval"
+  } else if (!r.error && /^Not run: /.test(summary)) {
+    step.what = summary.slice(9); step.expect = ""; step.tone = "paused"; step.result = "Not run"
+  } else if (r.error || ["failed", "not_started", "cancelled", "canceled", "interrupted"].indexOf(r.execution) !== -1 || ["failed", "cancelled", "canceled", "interrupted", "timed_out"].indexOf(jobState) !== -1) {
+    step.tone = "attention"; step.result = "Failed"
+  } else if (jobState !== "unknown" && (["running", "pending", "queued", "started"].indexOf(jobState) !== -1 || (r.execution === "running" && !settledJob))) {
+    step.tone = "working"; step.result = "In progress"
+  } else if ((r.dependency_state === "unresolved" && !(r.execution === "running" && settledJob)) || r.requires_reconciliation || r.execution === "unknown" || r.effect === "unknown" || jobState === "unknown") {
+    step.tone = "attention"; step.result = "Unknown, don't repeat"
+  }
+  step.what = taskPlain(step.what); step.expect = taskPlain(step.expect)
+  return step
+}
+function taskWarning(item) {
+  var proof = taskProjection(item)
+  if (Number(proof.unresolved_request_count) > 0 || (Array.isArray(proof.unresolved_request_refs) && proof.unresolved_request_refs.length)) return "Some steps may not have finished. See What it did below before running them again."
+  var receipts = listOf(item, "receipts")
+  for (var i = 0; i < receipts.length; i++) if (taskStep(receipts[i]).result === "Unknown, don't repeat") return "Some steps may not have finished. See What it did below before running them again."
+  return ""
+}
+function taskRunSummary(group) {
+  var items = group.items, unseen = 0, mix = {}, app = "", names = { Key: ["key press", "key presses"], Click: ["click", "clicks"], Type: ["typing", "typing"], Scroll: ["scroll", "scrolls"] }
+  items.forEach(function(s) {
+    if (s.tone === "paused") unseen++
+    mix[s.verb] = (mix[s.verb] || 0) + 1
+    var match = / (?:in|into) ([\w.-]+)$/.exec(s.what)
+    if (!app && match) app = match[1].split(".").pop()
+  })
+  var text = group.kind === "exec" ? "Ran " + items.length + " commands" : "Did " + items.length + " steps in " + (app || "the app")
+  if (group.kind !== "exec") text += " (" + Object.keys(mix).map(function(verb) { var n = mix[verb], noun = names[verb] || ["other step", "other steps"]; return n + " " + noun[n > 1 ? 1 : 0] }).join(", ") + ")"
+  return text + (unseen ? ", " + unseen + " not seen" : "")
+}
+function taskRuns(item, live) {
+  var steps = listOf(item, "receipts").slice().reverse().map(taskStep), groups = []
+  steps.forEach(function(s, i) {
+    var fold = s.kind !== "task" && s.tone !== "attention" && !(live && i === steps.length - 1)
+    var last = groups[groups.length - 1]
+    if (last && last.eligible && fold && last.kind === s.kind) last.items.push(s)
+    else groups.push({ key: s.key, kind: s.kind, eligible: fold, items: [s] })
+  })
+  groups.forEach(function(g) { g.fold = g.eligible && g.items.length >= 3; g.summary = taskRunSummary(g) })
+  return groups
+}
+
 // A file size as a person reads it, in decimal units counted from the bytes (1 MB is
 // 1,000,000 bytes): "900 bytes", "1.6 MB", "250 MB". ibara's size_text (operator_files.rs)
 // words the refusals the same way.
@@ -621,15 +785,161 @@ function attentionView(data) {
     var item = asObject(list[i])
     if (!requestId(item.computer_id) || !requestId(item.ref) || !/^[a-z_.]{1,40}$/.test(String(item.kind || ""))) continue
     var at = timeMs(item.at)
+    // A login request (kind `login`) is answered on the sharing computer's console: see loginRequestView.
+    var login = item.kind === "login" ? loginRequestView(item.details) : null
+    if (item.kind === "login" && !login) continue
     var words = item.kind === "approval" ? approvalWords(item) : { summary: clip(item.summary, 400), facts: [], request: "", described: true }
     var options = item.kind === "question" && Array.isArray(item.options)
       ? item.options.filter(function(o) { return typeof o === "string" && o.trim() !== "" && o.length <= 256 }).slice(0, 20) : []
     var asked = approvalAsks(item)
     out.push({ computer_id: String(item.computer_id), label: clip(item.label, 128), ref: String(item.ref), kind: String(item.kind),
       summary: words.summary, facts: words.facts, request: words.request, described: words.described, options: options, at: isFinite(at) ? at : 0, unreachable: item.unreachable === true,
-      agent: asked.agent, effect: asked.effect, stopAsking: asked.stopAsking })
+      agent: login ? login.agent : asked.agent, task_ref: requestId(item.task_ref) ? String(item.task_ref) : "", effect: asked.effect, stopAsking: asked.stopAsking, login: login })
   }
   out.sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
+  return out
+}
+
+// ---- login sharing. A site is one registrable domain, lowercase ("irs.gov", "sos.ok.gov").
+var LOGIN_SITE = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
+var LOGIN_RULES = ["allow", "ask", "deny"]
+function loginSite(value) {
+  var site = String(value || "").trim().toLowerCase()
+  return LOGIN_SITE.test(site) ? site : ""
+}
+// "a", "a and b", "a, b and c".
+function listWords(names) {
+  var list = Array.isArray(names) ? names : []
+  return list.length < 2 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1]
+}
+// A login request's details (attention kind `login`): who asks, for which task, the sites (each
+// with the site it signs in through, `via`), the page, whether the agent is from one of your own
+// computers and the sharing computer's name. Null without a site to share.
+function loginRequestView(details) {
+  var d = asObject(details), task = asObject(d.task), sites = [], seen = {}
+  var list = Array.isArray(d.sites) ? d.sites : []
+  for (var i = 0; i < list.length && sites.length < 20; i++) {
+    var entry = asObject(list[i]), site = loginSite(entry.site)
+    if (!site || seen[site]) continue
+    seen[site] = true
+    var via = loginSite(entry.via)
+    sites.push({ site: site, via: via !== site ? via : "" })
+  }
+  if (!sites.length) return null
+  var agent = typeof d.agent === "string" && /^[a-z0-9@_.-]{1,100}$/.test(d.agent) ? d.agent : ""
+  return { agent: agent, principal: clip(d.principal, 100), taskRef: requestId(task.task_ref) ? String(task.task_ref) : "", goal: clip(task.goal, 200),
+    sites: sites, page: clip(d.page, 300), own: d.own === true, sourceLabel: clip(d.source_label, 128) }
+}
+// Two-site sign-ins, as a person reads them: "irs.gov signs in through id.me".
+function loginThrough(sites) {
+  return (Array.isArray(sites) ? sites : []).filter(function(s) { return s && s.via }).map(function(s) { return s.site + " signs in through " + s.via })
+}
+// `login-settings`: this console's login sharing, its browsers, the All Computers rules, each
+// computer's standing and the sites that rejected a shared login lately.
+function loginSettingsView(data) {
+  var d = asObject(data), browsers = [], rules = {}, computers = {}, rejected = []
+  var list = Array.isArray(d.browsers) ? d.browsers : []
+  for (var i = 0; i < list.length && browsers.length < 10; i++) {
+    var b = asObject(list[i])
+    if (!/^[a-z0-9_-]{1,40}$/.test(String(b.browser || ""))) continue
+    var profiles = (Array.isArray(b.profiles) ? b.profiles : []).filter(function(p) { return typeof p === "string" && p.trim() !== "" && p.length <= 100 }).slice(0, 20)
+    browsers.push({ browser: String(b.browser), name: clip(b.name, 60) || String(b.browser), profiles: profiles, supported: b.supported === true, reason: clip(b.reason, 200) })
+  }
+  var all = asObject(d.all_rules)
+  for (var key in all) { var site = loginSite(key); if (site && LOGIN_RULES.indexOf(all[key]) !== -1) rules[site] = all[key] }
+  var byId = asObject(d.computers)
+  for (var id in byId) {
+    if (!requestId(id)) continue
+    var c = asObject(byId[id])
+    computers[id] = { configured: c.configured === true, sourceElsewhere: clip(c.source_elsewhere, 128), sitesAllowed: Math.max(0, Math.floor(Number(c.sites_allowed) || 0)), older: c.older === true }
+  }
+  var gone = Array.isArray(d.rejected) ? d.rejected : []
+  for (var r = 0; r < gone.length && rejected.length < 20; r++) {
+    var entry = asObject(gone[r]), at = Number(entry.at_ms)
+    if (requestId(entry.computer) && loginSite(entry.site) && isFinite(at) && at > 0) rejected.push({ computer: String(entry.computer), site: loginSite(entry.site), at: at })
+  }
+  return { enabled: d.enabled === true, decided: d.decided === true, browser: String(d.browser || ""), profile: clip(d.profile, 100), label: clip(d.label, 128),
+    connected: d.connected === true, installable: d.installable === true, browsers: browsers, allRules: rules, computers: computers,
+    targetRole: d.target_role === true, rejected: rejected }
+}
+// The browser's own name ("Brave"), for the words that name it; "your browser" when unknown.
+function loginBrowserName(settings, browser) {
+  var list = settings && Array.isArray(settings.browsers) ? settings.browsers : [], id = String(browser || (settings ? settings.browser : "") || "")
+  for (var i = 0; i < list.length; i++) if (list[i].browser === id) return list[i].name
+  return "your browser"
+}
+// One answer to a login request, for `login-answer --decisions`: every site the person left
+// ticked gets the choice (share, share_all, never), and every other site Don't Share.
+function loginDecisions(sites, unticked, choice) {
+  var out = {}, off = unticked && typeof unticked === "object" ? unticked : {}
+  var list = Array.isArray(sites) ? sites : []
+  for (var i = 0; i < list.length; i++) out[list[i].site] = choice !== "decline" && !off[list[i].site] ? choice : "decline"
+  return out
+}
+// What the person reads once an answer went (`login-answer` → sites: [{site, outcome}]):
+//   note: what happened, a message that leaves by itself;
+//   waiting: the sites waiting for the browser to open, said until dismissed;
+//   unknown: sites whose write couldn't be confirmed, said until dismissed;
+//   signedOut: sites to sign in to in the browser before Retry (the request stays open);
+//   off: sharing was off.
+function loginAnswerWords(outcomes, browser, computer) {
+  var by = { shared: [], declined: [], denied: [], signed_out_there: [], waiting_for_browser: [], sharing_off: [], unknown: [] }
+  var list = Array.isArray(outcomes) ? outcomes : []
+  for (var i = 0; i < list.length; i++) {
+    var o = asObject(list[i]), site = loginSite(o.site)
+    if (site && by[o.outcome]) by[o.outcome].push(site)
+  }
+  var name = String(browser || "your browser"), where = clip(computer, 128) || "that computer", notes = []
+  if (by.shared.length) notes.push("Shared your login for " + listWords(by.shared) + " with " + where + ".")
+  if (by.denied.length) notes.push(listWords(by.denied) + (by.denied.length === 1 ? " is" : " are") + " never shared now, on any computer.")
+  if (by.declined.length) notes.push("Didn't share " + listWords(by.declined) + ".")
+  return {
+    note: notes.join(" "),
+    waiting: by.waiting_for_browser.length ? "Open " + name + " to share your login for " + listWords(by.waiting_for_browser) + ". It goes to " + where + " once " + name + " runs." : "",
+    unknown: loginUnknownWords(by.unknown),
+    signedOut: by.signed_out_there,
+    off: by.sharing_off.length > 0
+  }
+}
+// A write ibara couldn't confirm (outcome `unknown`).
+function loginUnknownWords(sites) {
+  var list = Array.isArray(sites) ? sites : []
+  return list.length ? "Couldn't confirm the login for " + listWords(list) + " was written. Try Share again or use Take Control." : ""
+}
+// "You're not signed in to sos.ok.gov in Brave. Sign in there, then choose Retry."
+function loginSignedOutWords(sites, browser) {
+  var list = Array.isArray(sites) ? sites : []
+  if (!list.length) return ""
+  return "You're not signed in to " + listWords(list) + " in " + String(browser || "your browser") + ". Sign in there, then choose Retry."
+}
+// `login-rows --computer ID`: one row per site with a rule there or for All Computers.
+var LOGIN_RESULTS = ["worked", "site_rejected"]
+function loginRowsView(data) {
+  var d = asObject(data), rows = [], denied = []
+  var list = Array.isArray(d.rows) ? d.rows : []
+  for (var i = 0; i < list.length && rows.length < 500; i++) {
+    var r = asObject(list[i]), site = loginSite(r.site)
+    if (!site || LOGIN_RULES.indexOf(r.rule) === -1) continue
+    var shared = Number(r.last_shared_ms), resultAt = Number(r.last_result_at_ms)
+    rows.push({ site: site, rule: String(r.rule), ownRule: LOGIN_RULES.indexOf(r.own_rule) !== -1 ? String(r.own_rule) : "",
+      allRule: LOGIN_RULES.indexOf(r.all_rule) !== -1 ? String(r.all_rule) : "", firstGoal: clip(r.first_goal, 200),
+      lastShared: isFinite(shared) && shared > 0 ? shared : 0, lastResult: LOGIN_RESULTS.indexOf(r.last_result) !== -1 ? String(r.last_result) : "",
+      lastResultAt: LOGIN_RESULTS.indexOf(r.last_result) !== -1 && isFinite(resultAt) && resultAt > 0 ? resultAt : 0 })
+  }
+  var deniedList = Array.isArray(d.denied_all) ? d.denied_all : []
+  for (var j = 0; j < deniedList.length && denied.length < 500; j++) { var s = loginSite(deniedList[j]); if (s) denied.push(s) }
+  rows.sort(function(a, b) { return a.site < b.site ? -1 : a.site > b.site ? 1 : 0 })
+  return { rows: rows, deniedAll: denied }
+}
+// Sites that rejected a shared login and haven't had their toast yet: each entry once (by
+// computer, site and time), and none from before `since` (what came before this console started).
+function loginRejectedFresh(rejected, seen, since) {
+  var done = seen && typeof seen === "object" ? seen : {}, out = []
+  var list = Array.isArray(rejected) ? rejected : []
+  for (var i = 0; i < list.length; i++) {
+    var r = list[i], key = r.computer + "|" + r.site + "|" + r.at
+    if (!done[key] && r.at >= Number(since || 0)) out.push({ key: key, computer: r.computer, site: r.site, at: r.at })
+  }
   return out
 }
 
@@ -730,9 +1040,25 @@ function choiceLabel(setting, value) {
 
 // A desktop notification's text for an approval: its words, or, when the computer gave none
 // a person can read, where to look (a notification has no Details).
-function approvalNoticeBody(item) {
-  if (item && item.described && item.summary) return item.summary
-  return "An agent is waiting for your approval. Open the ibara console to see what it wants to do."
+function requestNoticeBody(item, label, session, what) {
+  var who = item && item.agent ? item.agent : "An agent"
+  // Older question records do not name their agent. Use the computer's current
+  // task only when it is the same task, rather than attributing an old question.
+  var task = session && session.active_task
+  if (who === "An agent" && task && item.task_ref && task.task_ref === item.task_ref && task.principal)
+    who = "An agent from " + task.principal
+  return "Agent: " + clip(who, 100) + "\nComputer: " + clip(label || (item && item.label) || "Unknown computer", 128) + "\n" + clip(what, 300)
+}
+function approvalNoticeBody(item, label, session) {
+  var facts = item && Array.isArray(item.facts) ? item.facts : []
+  var what = "", page = ""
+  for (var i = 0; i < facts.length; i++) {
+    if (facts[i].label === "What") what = facts[i].value
+    if (facts[i].label === "Page") page = facts[i].value
+  }
+  if (!what && item && item.described) what = item.summary
+  if (!what) what = "Approval requested. Open the ibara console to see what it wants to do."
+  return requestNoticeBody(item, label, session, what + (page ? " on " + page : ""))
 }
 
 // Settings as ibarad returns them (`settings get`, `operator-settings get`): sections of settings,
@@ -839,6 +1165,19 @@ function awayView(data) {
   return { since: isFinite(since) ? since : 0, computers: out }
 }
 
+// A While you were away event's short tag and the state color it takes (Tokens.stateColor).
+function awayEventTag(kind, summary) {
+  var k = String(kind || ""), failed = /\b(fail|failed|couldn't|could not|error|refused|denied)\b/i.test(String(summary || ""))
+  if (k === "task_began") return { label: "Started", tone: "human" }
+  if (k === "task_finished") return failed ? { label: "Ended", tone: "attention" } : { label: "Finished", tone: "ready" }
+  if (k === "attention.raised") return { label: "Asked", tone: "paused" }
+  if (k === "attention.answered") return { label: "Answered", tone: "working" }
+  if (k === "attention.expired") return { label: "Expired", tone: "offline" }
+  if (k.indexOf("window") === 0) return { label: "Window", tone: "working" }
+  if (k.indexOf("login") !== -1) return { label: "Login", tone: failed ? "attention" : "working" }
+  return { label: sentence(k.replace(/[._]/g, " ")).split(" ")[0] || "Event", tone: failed ? "attention" : "offline" }
+}
+
 // Apply Theme to Fleet (`theme-fleet`): the theme and what happened on each computer.
 var THEME_STATES = ["applied", "offline", "failed"]
 function themeResultsView(data) {
@@ -859,8 +1198,8 @@ function themeResultsView(data) {
 // attention only once that has lasted PROBLEM_AFTER_MS, so an update or a restart never raises it.
 var PROBLEM_AFTER_MS = 60000
 
-// Computers that need a person, one each: fleet-attention's items other than approvals and
-// questions (its self-repair couldn't fix something), then a computer whose own status says so
+// Computers that need a person, one each: fleet-attention's items other than approvals, login
+// requests and questions (its self-repair couldn't fix something), then a computer whose own status says so
 // while it is on. `hidden` maps a computer to the message put away there; it shows again once the
 // message changes. → [{ computer_id, label, kind, message, fix }], `fix` a known Fix It or "".
 function needsYouView(items, computers, hidden) {
@@ -873,7 +1212,7 @@ function needsYouView(items, computers, hidden) {
   var list = Array.isArray(items) ? items : []
   for (var i = 0; i < list.length; i++) {
     var item = asObject(list[i])
-    if (item.kind === "approval" || item.kind === "question") continue
+    if (item.kind === "approval" || item.kind === "question" || item.kind === "login") continue
     add(String(item.computer_id || ""), clip(item.label, 128), String(item.kind || ""), clip(item.summary, 240) || "This computer needs you.", item.kind === "repair" ? item.ref : "")
   }
   var rows = Array.isArray(computers) ? computers : []
@@ -945,16 +1284,18 @@ function lastingProblems(computers, since, nowMs, hidden) {
 
 // ---- toasts. Every console message is a toast over the page's bottom-right corner, and nothing
 // takes the page's room. Standing toasts last as long as their condition. In the order they are
-// added when several start at once: approvals and agents' questions (oldest first) and requests
-// to use this computer, which wait for an answer on every page; computers that need a person and
-// computers offline or needing attention (every page: whatever makes the bar red); the files on
-// their way to the open computer; What's New; a theme run; While you were away; and, on the fleet
-// until an agent has begun a task, the pointer to Connect an Agent. While ibara isn't running on
-// this computer (`serviceStopped`), that is the one standing toast: nothing else can be answered
-// or trusted until it runs again.
-//   state: { route, computerId, approvals, questions, pairRequests, needs: needsYouView,
-//     problems: lastingProblems, drop: the open computer's drop or null, whatsNew, themeRun,
-//     awayCount, awayHidden, connectPrompt, firstTaskDone, connectHintDone, serviceStopped }
+// added when several start at once: approvals, login requests and agents' questions (oldest
+// first) and requests to use this computer, which wait for an answer on every page; computers that
+// need a person and computers offline or needing attention (every page: whatever makes the bar
+// red); sites that rejected a shared login; the files on their way to the open computer; What's
+// New; the card asking whether agents may use your logins; a theme run; While you were away; and,
+// on the fleet until an agent has begun a task, the pointer to Connect an Agent. While ibara isn't
+// running on this computer (`serviceStopped`), that is the one standing toast: nothing else can be
+// answered or trusted until it runs again.
+//   state: { route, computerId, approvals, logins, questions, pairRequests, needs: needsYouView,
+//     problems: lastingProblems, loginRejected: [{ key }], drop: the open computer's drop or null,
+//     whatsNew, loginSetup, themeRun, awayCount, awayHidden, connectPrompt, firstTaskDone,
+//     connectHintDone, serviceStopped }
 //   → [{ key, kind, ref, tone }], tone "approval", "request", "error" or "note".
 function standingToasts(state) {
   var s = state || {}, out = []
@@ -962,6 +1303,9 @@ function standingToasts(state) {
   var approvals = Array.isArray(s.approvals) ? s.approvals : []
   for (var i = 0; i < approvals.length; i++)
     if (approvals[i] && approvals[i].ref) out.push({ key: "approval:" + approvals[i].ref, kind: "approval", ref: String(approvals[i].ref), tone: "approval" })
+  var logins = Array.isArray(s.logins) ? s.logins : []
+  for (var l = 0; l < logins.length; l++)
+    if (logins[l] && logins[l].ref) out.push({ key: "login:" + logins[l].ref, kind: "login", ref: String(logins[l].ref), tone: "approval" })
   var questions = Array.isArray(s.questions) ? s.questions : []
   for (var q = 0; q < questions.length; q++)
     if (questions[q] && questions[q].ref) out.push({ key: "question:" + questions[q].ref, kind: "question", ref: String(questions[q].ref), tone: "approval" })
@@ -974,6 +1318,9 @@ function standingToasts(state) {
   var problems = Array.isArray(s.problems) ? s.problems : []
   for (var p = 0; p < problems.length; p++)
     if (problems[p] && problems[p].computer_id) out.push({ key: "problem:" + problems[p].computer_id, kind: "problem", ref: String(problems[p].computer_id), tone: "error" })
+  var rejected = Array.isArray(s.loginRejected) ? s.loginRejected : []
+  for (var r = 0; r < rejected.length; r++)
+    if (rejected[r] && rejected[r].key) out.push({ key: "login-rejected:" + rejected[r].key, kind: "login-rejected", ref: String(rejected[r].key), tone: "error" })
   var id = String(s.computerId || "")
   if (s.route === "computer" && id) {
     var drop = s.drop
@@ -983,6 +1330,7 @@ function standingToasts(state) {
     }
   }
   if (s.whatsNew) out.push({ key: "news", kind: "news", ref: "", tone: "note" })
+  if (s.loginSetup) out.push({ key: "login-setup", kind: "login-setup", ref: "", tone: "note" })
   var run = s.themeRun
   if (run) {
     var broken = run.state === "failed" || (Array.isArray(run.results) && run.results.some(function(r) { return r.state === "failed" }))
@@ -993,11 +1341,12 @@ function standingToasts(state) {
   return out
 }
 
-// Which toasts show while the stack is closed. Whatever waits for an answer (an approval, an
-// agent's question, a request to use this computer, ibara not running here) always shows; the
-// newest of the rest fill the room left of `maxShown`, and older ones wait behind "+N more".
+// Which toasts show while the stack is closed. Whatever waits for an answer (an approval, a login
+// request, an agent's question, a request to use this computer, whether agents may use your
+// logins, ibara not running here) always shows; the newest of the rest fill the room left of
+// `maxShown`, and older ones wait behind "+N more".
 //   kinds: each row's kind, oldest first → { shown: [bool per row], hidden: rows behind "+N more" }
-var ANSWER_KINDS = ["approval", "question", "pair", "stopped"]
+var ANSWER_KINDS = ["approval", "login", "question", "pair", "login-setup", "stopped"]
 function toastLayout(kinds, maxShown) {
   var list = Array.isArray(kinds) ? kinds : [], asks = 0, shown = [], hidden = 0
   for (var i = 0; i < list.length; i++) if (ANSWER_KINDS.indexOf(list[i]) !== -1) asks += 1

@@ -7,6 +7,7 @@ import qs.Commons
 // emits `chosen` at once. Escape, or a click elsewhere, closes the list and changes nothing.
 Item {
   id: root
+  readonly property Tokens tokens: Tokens {}
   property string rule: "deny"
   property bool blocked: false
   property string disabledReason: ""
@@ -33,6 +34,7 @@ Item {
     implicitWidth: Math.ceil(widest.advanceWidth + padding * 2)
     size: "small"
     label: root.labelFor(root.rule) + " ▾"
+    labelColor: root.tokens.textTint(root.tokens.ruleColor(root.rule))
     blocked: root.blocked
     disabledReason: root.disabledReason
     selected: popup.opened
@@ -74,6 +76,7 @@ Item {
           role: "quiet"
           glyph: modelData.value === root.rule ? "✓" : " "
           label: modelData.label
+          labelColor: root.tokens.textTint(root.tokens.ruleColor(modelData.value))
           selected: modelData.value === root.rule
           Accessible.role: Accessible.MenuItem
           Keys.onUpPressed: if (index > 0) options.itemAt(index - 1).forceActiveFocus()

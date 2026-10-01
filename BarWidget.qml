@@ -33,17 +33,19 @@ BarWidget {
   // Offline or needing attention for a minute or more; a restart or an update never counts.
   readonly property var problems: !stopped && ibaraService && Array.isArray(ibaraService.problems) ? ibaraService.problems : []
   readonly property string worst: stopped ? "" : problems.length > 0 ? "attention" : counts.mine > 0 ? "human" : counts.working > 0 ? "working" : ""
-  // Approvals, questions and computers that need you, read every 10 s even while nothing is open.
+  // Approvals, login requests, questions and computers that need you, read every 10 s even while nothing is open.
   readonly property var approvals: !stopped && ibaraService && Array.isArray(ibaraService.approvals) ? ibaraService.approvals : []
+  readonly property var logins: !stopped && ibaraService && Array.isArray(ibaraService.logins) ? ibaraService.logins : []
   readonly property var questions: !stopped && ibaraService && Array.isArray(ibaraService.questions) ? ibaraService.questions : []
   readonly property var needsYou: !stopped && ibaraService && Array.isArray(ibaraService.needsYou) ? ibaraService.needsYou : []
-  readonly property int needsCount: approvals.length + questions.length + needsYou.length
+  readonly property int needsCount: approvals.length + logins.length + questions.length + needsYou.length
   // The same counts and words as the fleet header, listing only what is not zero.
   readonly property string summary: {
     if (!ibaraService) return "Connecting"
     if (stopped) return "ibara isn't running on this computer"
     var needs = []
     if (approvals.length) needs.push(approvals.length === 1 ? "1 approval waiting" : approvals.length + " approvals waiting")
+    if (logins.length) needs.push(logins.length === 1 ? "1 login request waiting" : logins.length + " login requests waiting")
     if (questions.length) needs.push(questions.length === 1 ? "1 question waiting" : questions.length + " questions waiting")
     if (needsYou.length) needs.push(needsYou.length === 1 ? needsYou[0].label + " needs you" : needsYou.length + " computers need you")
     if (problems.length) needs.push(problems.length === 1 ? problems[0].heading : problems.length + " computers need attention")
@@ -85,7 +87,7 @@ BarWidget {
   // nothing to answer, the red dot opens what it is about in the same way.
   function openNeeds() {
     var ids = []
-    approvals.concat(questions, needsYou).forEach(function(item) { if (ids.indexOf(item.computer_id) === -1) ids.push(item.computer_id) })
+    approvals.concat(logins, questions, needsYou).forEach(function(item) { if (ids.indexOf(item.computer_id) === -1) ids.push(item.computer_id) })
     if (!ids.length) problems.forEach(function(item) { if (ids.indexOf(item.computer_id) === -1) ids.push(item.computer_id) })
     if (ids.length !== 1) { summon({ route: "fleet" }); return }
     var payload = { route: "computer", computerId: ids[0] }

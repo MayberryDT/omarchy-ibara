@@ -25,10 +25,11 @@ Item {
   readonly property string omarchyUpdateLine: {
     var u = omarchyUpdate
     if (!u) return ""
-    if (u.state === "running") return "Updating Omarchy…"
-    var when = u.finished_at > 0 ? " · " + tokens.changedLabel(new Date(u.finished_at).toISOString(), service ? service.nowMs : Date.now()) : ""
-    if (u.state === "failed") return "Omarchy's last update failed" + when + "." + (u.message ? " " + u.message : "") + " Choose Update Omarchy to try again."
-    return "Omarchy updated" + when + (u.restart_needed ? " · restart to finish" : "")
+    if (u.state === "running") return tokens.ink("Updating Omarchy…", tokens.textTint(tokens.workingColor))
+    var when = u.finished_at > 0 ? tokens.ink(" · " + tokens.changedLabel(new Date(u.finished_at).toISOString(), service ? service.nowMs : Date.now()), tokens.dim) : ""
+    if (u.state === "failed") return tokens.ink("Omarchy's last update failed", tokens.textTint(tokens.attentionColor)) + when + "." +
+      (u.message ? "<br>" + tokens.ink(u.message, tokens.textTint(tokens.attentionColor)) : "") + "<br>Choose Update Omarchy to try again."
+    return tokens.ink("Omarchy updated", tokens.textTint(tokens.readyColor)) + when + (u.restart_needed ? tokens.ink(" · restart to finish", tokens.textTint(tokens.pausedColor)) : "")
   }
 
   function reload() {
@@ -80,27 +81,37 @@ Item {
         title: "Health and upkeep"
         Repeater {
           model: root.healthLines
-          delegate: Copy { text: String(modelData); font.pixelSize: Style.font.bodySmall }
+          delegate: Copy {
+            required property var modelData
+            readonly property string line: String(modelData)
+            width: parent ? parent.width : 0
+            textFormat: Text.StyledText
+            text: line.indexOf("Busy: ") === 0 ? root.tokens.labeled(line, root.tokens.textTint(root.tokens.statusColor(line.slice(6))))
+              : line.indexOf("Memory ") === 0 || line.indexOf("Disk ") === 0 ? root.tokens.ink(line.slice(0, line.indexOf(" ") + 1), root.tokens.dim) + root.tokens.ink(line.slice(line.indexOf(" ") + 1), root.tokens.foreground)
+              : root.tokens.ink(line, root.tokens.dim)
+            font.pixelSize: Style.font.bodySmall
+          }
         }
         Copy {
           visible: root.healthLines.length === 0
           text: root.service && root.service.readPending("health") ? "Checking health…" : root.service && root.service.readErrors.health ? StatusModel.clip(root.service.readErrors.health, 200) : "No health report yet. Choose Refresh Health."
-          dimmed: true
+          color: root.service && root.service.readErrors.health ? root.tokens.textTint(root.tokens.attentionColor) : root.tokens.dim
           font.pixelSize: Style.font.bodySmall
         }
         Copy {
           id: lastRepairLine
           visible: !!root.lastRepair
           width: parent.width
-          text: root.lastRepair ? "Last repair: " + StatusModel.clip(root.lastRepair.summary, 160) + (root.lastRepair.at ? " · " + root.tokens.changedLabel(new Date(StatusModel.timeMs(root.lastRepair.at)).toISOString(), root.service ? root.service.nowMs : Date.now()) : "") : ""
-          dimmed: true
+          textFormat: Text.StyledText
+          text: root.lastRepair ? root.tokens.ink("Last repair: ", root.tokens.dim) + root.tokens.ink(StatusModel.clip(root.lastRepair.summary, 160), root.tokens.foreground) + (root.lastRepair.at ? root.tokens.ink(" · " + root.tokens.changedLabel(new Date(StatusModel.timeMs(root.lastRepair.at)).toISOString(), root.service ? root.service.nowMs : Date.now()), root.tokens.dim) : "") : ""
           font.pixelSize: Style.font.bodySmall
         }
         Copy {
           visible: text !== ""
           width: parent.width
+          textFormat: Text.StyledText
           text: root.omarchyUpdateLine
-          color: root.omarchyUpdate && root.omarchyUpdate.state === "failed" ? root.tokens.attentionColor : root.tokens.dim
+          color: root.tokens.textTint(root.tokens.statusColor(root.omarchyUpdate ? root.omarchyUpdate.state : ""))
           font.pixelSize: lastRepairLine.font.pixelSize
         }
         DataAge {
@@ -155,7 +166,7 @@ Item {
           visible: !!root.service && root.service.readErrors.logs !== undefined
           width: parent.width
           text: root.service && root.service.readErrors.logs ? StatusModel.clip(root.service.readErrors.logs, 200) : ""
-          color: Color.urgent
+          color: root.tokens.textTint(root.tokens.attentionColor)
           font.pixelSize: Style.font.bodySmall
         }
         Rectangle {
@@ -222,7 +233,7 @@ Item {
           visible: !!root.computer && (root.computer.disk_password === true || root.health.disk_password === true)
           width: parent.width
           text: root.computerLabel + "'s disk asks for its password when it starts, so after a restart someone must type it there before ibara can reach it again."
-          color: Color.urgent
+          color: root.tokens.textTint(root.tokens.attentionColor)
           font.pixelSize: Style.font.bodySmall
         }
         Row {

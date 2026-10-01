@@ -30,17 +30,17 @@ Toast {
   onAcceptedChanged: if (accepted) matchAnim.restart()
   Component.onCompleted: if (accepted) matchAnim.restart()
 
-  Copy { width: parent.width; text: root.accepted ? root.name + " can use this computer now" : root.who + " wants to use this computer"; font.bold: true }
+  Copy { width: parent.width; text: root.accepted ? root.name + " can use this computer now" : root.who + " wants to use this computer"; color: root.tokens.textTint(root.accepted ? root.tokens.readyColor : root.tokens.pausedColor); font.bold: true }
   Row {
     spacing: Style.space(8)
-    Copy { anchors.baseline: codeText.baseline; text: root.accepted ? "Matched" : "Accept only if " + root.name + " shows"; color: root.accepted ? root.tokens.readyColor : Qt.alpha(Color.popups.text, 0.64); font.pixelSize: Style.font.bodySmall }
-    Copy { id: codeText; text: root.code; color: root.accepted ? root.tokens.readyColor : Color.popups.text; font.family: "monospace"; font.bold: true; font.pixelSize: Style.font.heading + Style.space(2); Accessible.ignored: true }
+    Copy { anchors.baseline: codeText.baseline; text: root.accepted ? "Matched" : "Accept only if " + root.name + " shows"; color: root.accepted ? root.tokens.textTint(root.tokens.readyColor) : root.tokens.dim; font.pixelSize: Style.font.bodySmall }
+    Copy { id: codeText; text: root.code; color: root.accepted ? root.tokens.textTint(root.tokens.readyColor) : root.tokens.foreground; font.family: "monospace"; font.bold: true; font.pixelSize: Style.font.heading + Style.space(2); Accessible.ignored: true }
     Text {
       id: check
       visible: root.accepted
       anchors.baseline: codeText.baseline
       text: "✓"
-      color: root.tokens.readyColor
+      color: root.tokens.textTint(root.tokens.readyColor)
       font.family: Style.font.family
       font.bold: true
       font.pixelSize: Style.font.heading + Style.space(6)

@@ -29,7 +29,7 @@ Panel {
   property var confirmReturnItem: null
   // Where the keyboard goes once the next page is built: { kind: "approval", ref } from the bar.
   property var pendingFocus: null
-  readonly property var computerTabs: ["screen", "windows", "activity", "files", "access", "system", "settings"]
+  readonly property var computerTabs: ["screen", "windows", "logins", "activity", "files", "access", "system", "settings"]
   readonly property Tokens tokens: Tokens {}
   readonly property var computers: service && Array.isArray(service.computers) ? service.computers : []
   readonly property var computer: computerById(computerId)
@@ -101,7 +101,7 @@ Panel {
     forgetToastAction(key)
     if (at === -1) return
     var row = toastModel.get(at), kind = row.kind, ref = row.ref
-    if (kind === "approval" || kind === "pair" || kind === "question") return
+    if (kind === "approval" || kind === "login" || kind === "pair" || kind === "question" || kind === "login-setup") return
     toastModel.remove(at)
     if (!service) return
     if (key === "action-error") service.actionError = ""
@@ -114,6 +114,7 @@ Panel {
     else if (kind === "theme") service.dismissThemeRun()
     else if (kind === "away") awayHidden = true
     else if (kind === "connect") connectHintDone = true
+    else if (kind === "login-rejected") service.dismissLoginRejected(ref)
   }
   // The standing toasts follow their conditions: new ones join at the bottom, gone ones leave,
   // and one that stays keeps its place (and the keyboard, if it has it).
@@ -122,10 +123,10 @@ Panel {
     var open = route === "computer" ? computer : null
     var wanted = StatusModel.standingToasts({
       route: route, computerId: computerId,
-      approvals: service.approvals, questions: service.questions, pairRequests: service.pairRequests,
-      needs: service.needsYou, problems: service.problems,
+      approvals: service.approvals, logins: service.logins, questions: service.questions, pairRequests: service.pairRequests,
+      needs: service.needsYou, problems: service.problems, loginRejected: service.loginRejected,
       drop: open && service.drops ? service.drops[computerId] || null : null,
-      whatsNew: service.whatsNew, themeRun: service.themeRun,
+      whatsNew: service.whatsNew, loginSetup: service.loginSetupWanted, themeRun: service.themeRun,
       awayCount: service.away && Array.isArray(service.away.computers) ? service.away.computers.length : 0, awayHidden: awayHidden,
       connectPrompt: service.connectPrompt, firstTaskDone: service.firstTaskDone, connectHintDone: connectHintDone,
       serviceStopped: service.serviceStopped === true
@@ -412,7 +413,15 @@ Panel {
     // you or are offline, files on their way, What's New, a theme run, While you were away and
     // whether an agent has begun a task.
     function onApprovalsChanged() { root.syncStandingLater() }
+    function onLoginsChanged() { root.syncStandingLater() }
+    function onLoginRejectedChanged() { root.syncStandingLater() }
+    function onLoginSetupWantedChanged() { root.syncStandingLater() }
     function onQuestionsChanged() { root.syncStandingLater() }
+    // Logins: a message that stays (the browser to open, a write not confirmed, an older ibara),
+    // another computer sharing when Turn On runs, and Sync Logins' plan to confirm.
+    function onLoginNote(key, text, error) { root.showToast(key, text, error) }
+    function onLoginAnotherSource(label, browser, profile) { root.askShareFromHere(label) }
+    function onLoginSyncPlanned(plan) { root.confirmSyncLogins(plan) }
     function onNeedsYouChanged() { root.syncStandingLater() }
     function onProblemsChanged() { root.syncStandingLater() }
     function onPairRequestsChanged() { root.syncStandingLater() }
@@ -643,6 +652,72 @@ Panel {
       danger: true,
       subject: id,
       run: function() { root.service.removeComputer(id) },
+      valid: function() { return !!root.computerById(id) }
+    })
+  }
+
+  // ---- logins. Turn On, Sync Logins… and the setup card's answers wait for ibara's reply; a
+  // confirmation that follows attaches to the control that asked (`loginAnchor`).
+  property Item loginAnchor: null
+  function anchorFor(item) { return item && item.visible ? item : null }
+  function turnOnLogins(anchor) {
+    if (!service) return
+    loginAnchor = anchor || focusedItem
+    service.turnOnLogins(false)
+  }
+  // Another computer shares logins: turning on here moves sharing to this computer.
+  function askShareFromHere(label) {
+    askConfirm({
+      anchor: anchorFor(loginAnchor),
+      message: "Logins for your computers come from " + label + ". Share from this computer instead?",
+      confirmLabel: "Share from Here",
+      run: function() { root.service.turnOnLogins(true) }
+    })
+  }
+  function confirmLoginsOff(anchor) {
+    if (!service || !service.loginSettings) return
+    var browser = service.loginBrowserName
+    askConfirm({
+      anchor: anchor,
+      message: "Turn off login sharing? ibara stops sharing and refreshing logins, and removes its extension from " + browser + " when it can. Logins already on your computers stay until they run out or are removed.",
+      confirmLabel: "Turn Off",
+      danger: true,
+      run: function() { root.service.turnOffLogins() },
+      valid: function() { return !!root.service.loginSettings && root.service.loginSettings.enabled }
+    })
+  }
+  function planSyncLogins(anchor) {
+    if (!service) return
+    loginAnchor = anchor || focusedItem
+    service.planLoginSync()
+  }
+  // Sync Logins' confirmation: how many sites and computers, and the sites you're signed out of.
+  function confirmSyncLogins(plan) {
+    var sites = plan.sites === 1 ? "1 site" : plan.sites + " sites", count = plan.computers === 1 ? "1 computer" : plan.computers + " computers"
+    var browser = service ? service.loginBrowserName : "your browser"
+    if (!plan.sites) { showToast("login-sync", "Nothing to sync: no site is Allowed on one computer and not the rest.", false); return }
+    askConfirm({
+      anchor: anchorFor(loginAnchor),
+      message: "Allow " + (plan.sites === 1 ? "1 site" : "the " + sites) + " on all " + count + "? " + (plan.sites === 1 ? "It's" : "Each is") + " Allowed on one of your computers now. " +
+        "Every computer gets a fresh login from " + browser + ": those that are on with their browser running right away, the rest the first time an agent needs it." +
+        (plan.signedOut.length ? " You're not signed in to " + StatusModel.listWords(plan.signedOut) + " in " + browser + ", so " + (plan.signedOut.length === 1 ? "that one waits" : "those wait") + " until you sign in there." : "") +
+        (plan.older.length ? " " + service.olderLoginWords(plan.older) : ""),
+      confirmLabel: "Sync Logins",
+      run: function() { root.service.syncLogins() }
+    })
+  }
+  // Remove on a computer's Logins tab: its cookies there go, and so does its rule there.
+  function confirmRemoveLogin(id, site, anchor) {
+    var c = computerById(id)
+    if (!c || !service) return
+    var name = tokens.label(c)
+    askConfirm({
+      anchor: anchor,
+      message: "Remove the login for " + site + " from " + name + "? ibara signs " + name + "'s browser out of " + site + " and removes its rule there, so the next request for it asks you again.",
+      confirmLabel: "Remove",
+      danger: true,
+      subject: id,
+      run: function() { root.service.removeLogin(id, site) },
       valid: function() { return !!root.computerById(id) }
     })
   }

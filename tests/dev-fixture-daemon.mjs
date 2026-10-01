@@ -627,6 +627,169 @@ function settingsReply(sections, store, scope, words, sectionId) {
   values[key] = value;
   return {data:shown(setting)};
 }
+// ---- login sharing, with this computer (Studio) as the sharing computer. control.json keys:
+//   logins: "on" (default: sharing from Brave · Default), "undecided" (the setup card shows),
+//     "off" (no computer shares), "elsewhere" (Laptop shares), "target" (this computer also runs
+//     agents) or "old" (an ibara without login sharing: every login command is unknown).
+//   login_requests: [{computer, agent, goal, sites: [site | {site, via}], page, own, minutes_ago}]:
+//     agents asking for logins (attention kind `login`, refs att_l0, att_l1, …).
+//   login_signed_out: sites you're not signed in to in Brave, until the first Retry.
+//   login_browser_closed: true while Brave isn't running (shares wait for it).
+//   login_unknown: sites whose write can't be confirmed.
+//   login_rejected: [{computer, site, minutes_ago}]: sites that rejected a shared login.
+//   login_pinned_elsewhere: {computer: label}: computers that take logins from another sharing
+//     computer (their requests name it), even while this one shares.
+// Fleet15's Nimbus runs an older ibara, as elsewhere; Onyx is off, so it gets logins later.
+const LOGIN_BROWSERS = [{browser:'brave', name:'Brave', profiles:['Default', 'Work'], supported:true}, {browser:'chromium', name:'Chromium', profiles:['Default'], supported:true}];
+let loginState = null;
+function logins() {
+  if (loginState) return loginState;
+  const mode = control().logins || 'on';
+  const on = mode === 'on';
+  const now = Date.now(), h = hours => now - hours * 3600000;
+  const ids = computerIds();
+  const rules = {}, history = {};
+  if (fleet) {
+    rules['fictional-03'] = {'sos.ok.gov':'allow', 'github.com':'allow', 'id.me':'ask', 'irs.gov':'ask'};
+    history['fictional-03'] = {'sos.ok.gov':{first_goal:'Renew my business license', last_shared_ms:h(2), last_result:'worked', last_result_at_ms:h(2)},
+      'github.com':{first_goal:'Build release 4.2', last_shared_ms:h(30), last_result:'worked', last_result_at_ms:h(30)},
+      'id.me':{first_goal:'File Q3 estimated tax', last_shared_ms:h(50), last_result:'site_rejected', last_result_at_ms:h(49)},
+      'irs.gov':{first_goal:'File Q3 estimated tax', last_shared_ms:0, last_result:null, last_result_at_ms:null}};
+    rules['fictional-04'] = {'stripe.com':'allow'};
+    history['fictional-04'] = {'stripe.com':{first_goal:'Refactor billing module', last_shared_ms:h(5), last_result:'worked', last_result_at_ms:h(5)}};
+  } else if (ids.length) {
+    rules[ids[0]] = {'example.org':'allow'};
+    history[ids[0]] = {'example.org':{first_goal:'Rotate the log archive', last_shared_ms:h(3), last_result:'worked', last_result_at_ms:h(3)}};
+  }
+  loginState = {mode, enabled:on, decided:mode !== 'undecided', browser:on ? 'brave' : '', profile:on ? 'Default' : '',
+    allRules:{'chase.com':'deny', 'gmail.com':'deny', 'usps.com':'allow'}, rules, history, answered:new Set(), retried:new Set(), open:new Set()};
+  return loginState;
+}
+const LOGIN_ORDER = {deny:0, ask:1, allow:2};
+const loginOlder = id => !!member(id)?.older_ibara || listed('login_older', id);
+function loginEffective(id, site) {
+  const own = logins().rules[id]?.[site], all = logins().allRules[site];
+  const layers = [own, all].filter(Boolean);
+  return layers.length ? layers.sort((a, b) => LOGIN_ORDER[a] - LOGIN_ORDER[b])[0] : 'ask';
+}
+const pinnedElsewhere = () => control().login_pinned_elsewhere && typeof control().login_pinned_elsewhere === 'object' ? control().login_pinned_elsewhere : {};
+function loginRequests() {
+  const list = Array.isArray(control().login_requests) ? control().login_requests : [];
+  const s = logins();
+  return list.map((r, i) => ({r, ref:'att_l' + i})).filter(({r, ref}) => valid(String(r?.computer || '')) && !s.answered.has(ref)).map(({r, ref}) => {
+    const sites = (Array.isArray(r.sites) ? r.sites : []).map(entry => typeof entry === 'string' ? {site:entry} : entry);
+    const label = labelOf(r.computer), agent = String(r.agent || 'codex@relay');
+    const what = sites.length === 1 ? `your login for ${sites[0].site}` : `your logins for ${sites.length} sites`;
+    return {computer_id:r.computer, label, ref, kind:'login', summary:`${agent}, working on “${r.goal}” on ${label}, wants ${what}`, at:before(Number(r.minutes_ago) || 0),
+      details:{agent, principal:agent.split('@')[0], task:{task_ref:`task_${ref}`, goal:String(r.goal || '')}, sites, page:String(r.page || ''), own:r.own !== false,
+        source_label:s.mode === 'elsewhere' ? 'Laptop' : pinnedElsewhere()[r.computer] || (s.enabled ? 'Studio' : '')}};
+  });
+}
+function loginCommand(requestId, command, option, commandArgs) {
+  if (!command.startsWith('login-')) return null;
+  const ok = data => respond(requestId, command, data);
+  const fail = (code, message, data = null) => respond(requestId, command, data, {code, message, retry_safe:false}, 'failed');
+  const s = logins();
+  if (s.mode === 'old') return fail('INVALID_ARGUMENT', `Unknown command: ${command}.`);
+  const ids = computerIds().filter(id => !removedIds.has(id));
+  const brave = () => s.enabled && control().login_browser_closed !== true;
+  if (command === 'login-settings') {
+    const computers = Object.fromEntries(ids.map(id => [id, {configured:s.enabled && !loginOlder(id), sites_allowed:s.enabled ? new Set(Object.keys(s.rules[id] || {}).concat(Object.keys(s.allRules)).filter(site => loginEffective(id, site) === 'allow')).size : 0,
+      ...(s.mode === 'elsewhere' ? {source_elsewhere:'Laptop'} : pinnedElsewhere()[id] ? {source_elsewhere:pinnedElsewhere()[id]} : {}), ...(loginOlder(id) ? {older:true} : {})}]));
+    const rejected = (Array.isArray(control().login_rejected) ? control().login_rejected : []).filter(r => valid(String(r?.computer || '')))
+      .map(r => ({computer:r.computer, site:String(r.site), at_ms:started - (Number(r.minutes_ago) || 0) * 60000}));
+    return ok({enabled:s.enabled, decided:s.decided, browser:s.browser, profile:s.profile, label:s.enabled ? 'Studio' : '', connected:brave(), installable:true,
+      browsers:LOGIN_BROWSERS, all_rules:s.allRules, computers, target_role:s.mode === 'target', rejected});
+  }
+  if (command === 'login-not-now') { s.decided = true; return ok({decided:true}); }
+  if (command === 'login-on') {
+    const browser = LOGIN_BROWSERS.find(b => b.browser === option('--browser'));
+    if (!browser || !browser.profiles.includes(option('--profile'))) return fail('INVALID_ARGUMENT', 'Choose a browser and profile ibara found.');
+    if (s.mode === 'target') return fail('TARGET_ROLE', "This computer also runs agents, so it can't share logins yet. Turn on sharing from the computer you use.");
+    if (s.mode === 'elsewhere' && !commandArgs.includes('--replace')) return fail('ANOTHER_SOURCE', 'Logins for your computers come from Laptop.', {label:'Laptop'});
+    Object.assign(s, {mode:'on', enabled:true, decided:true, browser:browser.browser, profile:option('--profile')});
+    return ok({enabled:true});
+  }
+  // login_extension_stays: ibara couldn't take its extension out (no power service here); login_extension_error: why it failed.
+  if (command === 'login-off') {
+    s.enabled = false; if (s.mode === 'on') s.mode = 'off';
+    const why = typeof control().login_extension_error === 'string' ? control().login_extension_error : '';
+    return ok({enabled:false, extension_removed:!why && control().login_extension_stays !== true, ...(why ? {extension_error:why} : {})});
+  }
+  if (!s.enabled) return fail('SHARING_OFF', 'Login sharing is off on this computer. Turn it on in Settings under Logins.');
+  const site = String(option('--site') || '').toLowerCase(), target = option('--computer');
+  if (command === 'login-rule') {
+    if (!['allow','ask','deny'].includes(option('--rule')) || !site) return fail('INVALID_ARGUMENT', 'Choose allow, ask or deny for a site.');
+    if (target === 'all') s.allRules[site] = option('--rule');
+    else if (valid(target)) (s.rules[target] ||= {})[site] = option('--rule');
+    else return fail('NOT_FOUND', 'That computer is not on your fleet.');
+    return ok({site, computer:target, rule:option('--rule')});
+  }
+  if (command === 'login-rows') {
+    if (!valid(target)) return fail('NOT_FOUND', 'That computer is not on your fleet.');
+    // Sites with a rule here, or Allowed or Ask First for All Computers; Never Share sites are listed apart.
+    const sites = [...new Set(Object.keys(s.rules[target] || {}).concat(Object.keys(s.allRules).filter(site => s.allRules[site] !== 'deny')))];
+    return ok({rows:sites.map(site => {
+      const past = s.history[target]?.[site] || {};
+      return {site, rule:loginEffective(target, site), own_rule:s.rules[target]?.[site] || null, all_rule:s.allRules[site] || null,
+        first_goal:past.first_goal || '', last_shared_ms:past.last_shared_ms || 0, last_result:past.last_result || null, last_result_at_ms:past.last_result_at_ms || null};
+    }), denied_all:Object.keys(s.allRules).filter(site => s.allRules[site] === 'deny')});
+  }
+  const deliver = (id, site, goal) => {
+    const past = ((s.history[id] ||= {})[site] ||= {first_goal:goal || '', last_shared_ms:0, last_result:null});
+    past.last_shared_ms = Date.now();
+  };
+  if (command === 'login-answer') {
+    const request = loginRequests().find(item => item.ref === option('--att'));
+    if (!request || request.computer_id !== target) return fail('NOT_FOUND', 'That request is no longer waiting.');
+    let decisions = {};
+    try { decisions = JSON.parse(option('--decisions') || '{}'); } catch {}
+    const retry = commandArgs.includes('--retry');
+    const signedOut = Array.isArray(control().login_signed_out) ? control().login_signed_out : [];
+    const unknown = Array.isArray(control().login_unknown) ? control().login_unknown : [];
+    const sites = request.details.sites.map(entry => {
+      const choice = decisions[entry.site];
+      if (choice === 'never') { s.allRules[entry.site] = 'deny'; return {site:entry.site, outcome:'denied'}; }
+      if (choice !== 'share' && choice !== 'share_all') return {site:entry.site, outcome:'declined'};
+      if (choice === 'share_all') s.allRules[entry.site] = 'allow'; else (s.rules[target] ||= {})[entry.site] = 'allow';
+      if (retry) s.retried.add(entry.site);
+      if (signedOut.includes(entry.site) && !s.retried.has(entry.site)) return {site:entry.site, outcome:'signed_out_there'};
+      if (!brave()) return {site:entry.site, outcome:'waiting_for_browser'};
+      if (unknown.includes(entry.site)) return {site:entry.site, outcome:'unknown'};
+      deliver(target, entry.site, request.details.task.goal);
+      return {site:entry.site, outcome:'shared'};
+    });
+    if (!sites.some(o => o.outcome === 'signed_out_there')) s.answered.add(request.ref);
+    return ok({sites});
+  }
+  if (command === 'login-share-with') {
+    const to = option('--to') === 'all' ? ids : String(option('--to') || '').split(',').filter(valid);
+    if (!site || !to.length) return fail('INVALID_ARGUMENT', 'Name a site and the computers to share it with.');
+    if (option('--to') === 'all') s.allRules[site] = 'allow'; else for (const id of to) (s.rules[id] ||= {})[site] = 'allow';
+    const older = to.filter(loginOlder), able = to.filter(id => !loginOlder(id));
+    const unknown = Array.isArray(control().login_unknown) && control().login_unknown.includes(site) ? able.slice(0, 1) : [];
+    const delivered = brave() ? able.filter(id => !down(id) && !unknown.includes(id)) : [];
+    for (const id of delivered) deliver(id, site, '');
+    return ok({site, delivered, deferred:able.filter(id => !delivered.includes(id) && !unknown.includes(id)), unknown, older});
+  }
+  if (command === 'login-remove') {
+    if (!valid(target) || !site) return fail('INVALID_ARGUMENT', 'Name a computer and a site.');
+    delete s.rules[target]?.[site];
+    delete s.history[target]?.[site];
+    // Off: queued. login_remove_partial: some cookies went, the rest are queued.
+    const partial = Array.isArray(control().login_remove_partial) && control().login_remove_partial.includes(site);
+    return ok(down(target) ? {site, removed:null, deferred:true} : partial ? {site, removed:2, deferred:true} : {site, removed:5});
+  }
+  if (command === 'login-sync') {
+    const allowed = [...new Set(ids.flatMap(id => Object.keys(s.rules[id] || {}).filter(site => s.rules[id][site] === 'allow')))].filter(site => s.allRules[site] !== 'allow' && s.allRules[site] !== 'deny');
+    const signedOut = (Array.isArray(control().login_signed_out) ? control().login_signed_out : []).filter(site => allowed.includes(site));
+    const reached = ids.filter(id => !loginOlder(id));
+    const unknown = commandArgs.includes('--dry-run') ? [] : (Array.isArray(control().login_sync_unknown) ? control().login_sync_unknown : []).filter(valid);
+    if (!commandArgs.includes('--dry-run')) for (const site of allowed) s.allRules[site] = 'allow';
+    return ok({sites:allowed.length, computers:reached.length, signed_out:signedOut, older:ids.filter(loginOlder), delivered:reached.filter(id => !down(id) && !unknown.includes(id)), deferred:reached.filter(down), unknown});
+  }
+  return fail('INVALID_ARGUMENT', `Unknown command: ${command}.`);
+}
 function attentionItems() {
   const approvals = Array.isArray(control().approvals) ? control().approvals : [];
   const items = approvals.map((approval, i) => ({approval, ref:'att_' + i}))
@@ -640,6 +803,7 @@ function attentionItems() {
     items.push({computer_id:computer, label:labelOf(computer), ref, kind:'question', summary:String(question.summary || ''), details:null,
       options:Array.isArray(question.options) ? question.options.map(String) : [], at:before(Number(question.minutes_ago) || 0)});
   });
+  items.push(...loginRequests());
   for (const id of computerIds()) {
     const need = needsPerson(id);
     if (need && !down(id)) items.push({computer_id:id, label:labelOf(id), ref:need.fix, kind:'repair', summary:need.message, at:before(7)});
@@ -737,6 +901,8 @@ function answer(request) {
     for (const [node, a] of added) if (a.computer_id === id) added.delete(node);
     return respond(requestId, command, {removed:{computer_id:id, label:labelOf(id)}});
   }
+  const loginReply = loginCommand(requestId, command, option, commandArgs);
+  if (loginReply) return loginReply;
   if (command === 'directory') return respond(requestId, command, {computers:rows.filter(r => !removedIds.has(r.computer_id)).concat([...added.values()].map(row => ({...row, label:labelOf(row.computer_id), wake:wakeOf(row.computer_id)})))});
   // The console keeps no station; its computers are its directory.
   if (command === 'status') return respond(requestId, command, {station_configured:false});
