@@ -28,7 +28,7 @@ Panel {
   readonly property var approvals: service && Array.isArray(service.approvals) ? service.approvals : []
   readonly property var logins: service && Array.isArray(service.logins) ? service.logins : []
   readonly property var questions: service && Array.isArray(service.questions) ? service.questions : []
-  readonly property var asks: stopped ? [] : approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
+  readonly property var asks: stopped ? [] : approvals.concat(logins, questions, service && service.needsYou ? service.needsYou.filter(function(n) { return n.unsupported }) : []).sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
   readonly property var shownAsks: asks.slice(0, 2)
   readonly property string moreAsksName: {
     var a = approvals.length + logins.length, q = questions.length
@@ -193,6 +193,12 @@ Panel {
           model: !root.stopped && root.service && Array.isArray(root.service.pairRequests) ? root.service.pairRequests : []
           delegate: PairRequestCard { width: content.width; service: root.service; request: modelData }
         }
+        Copy {
+          visible: !!root.service && root.service.updateAvailable !== ""
+          width: parent.width
+          text: root.service ? "ibara " + root.service.updateAvailable + " available" : ""
+          font.pixelSize: Style.font.bodySmall
+        }
         Repeater {
           id: askCards
           // By index: an item handed over as a model row loses its lists (options, Details lines).
@@ -202,9 +208,22 @@ Panel {
             required property int index
             readonly property var entry: root.shownAsks[index] || null
             width: content.width
-            sourceComponent: askSlot.entry && askSlot.entry.kind === "approval" ? approvalCard : askSlot.entry && askSlot.entry.kind === "login" ? loginCard : questionCard
+            sourceComponent: askSlot.entry && askSlot.entry.kind === "approval" ? approvalCard : askSlot.entry && askSlot.entry.kind === "login" ? loginCard : askSlot.entry && askSlot.entry.kind === "question" ? questionCard : unsupportedCard
             Component { id: approvalCard; ApprovalCard { service: root.service; item: askSlot.entry; compact: true; keyHints: askSlot.index === root.headIndex } }
             Component { id: loginCard; LoginCard { service: root.service; item: askSlot.entry; compact: true; onSettingsWanted: root.summon({ route: "settings" }) } }
+            Component {
+              id: unsupportedCard
+              Toast {
+                dismissable: false
+                Copy { width: parent.width; text: "This needs a newer ibara."; font.pixelSize: Style.font.bodySmall }
+                ActionButton {
+                  label: "Update ibara Here"
+                  blocked: !root.service || !root.service.thisComputerId
+                  disabledReason: "Pair this computer first."
+                  onClicked: if (!blocked) { root.service.power(root.service.thisComputerId, "update_ibara"); root.close() }
+                }
+              }
+            }
             Component { id: questionCard; QuestionCard { service: root.service; item: askSlot.entry; compact: true } }
           }
         }

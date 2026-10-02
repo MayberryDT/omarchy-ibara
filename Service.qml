@@ -182,6 +182,7 @@ Item {
   // An agent began its first task through this computer: its name and the computer it uses ("" when unknown).
   signal agentConnected(string computerId, string name)
   function noteStatusMoments(computerId, before, after) {
+    noteIbaraUpdate(computerId, before, after)
     if (!before || before.last_task === undefined) return
     var oldPoint = before.active_task && before.active_task.last_point, newPoint = after.active_task && after.active_task.last_point
     if (newPoint && (!oldPoint || oldPoint.at !== newPoint.at)) agentClicked(computerId, newPoint.x, newPoint.y)
@@ -223,6 +224,7 @@ Item {
   function openComputer(computerId) {
     var id = String(computerId || "")
     if (!selectComputer(id)) return false
+    if (!warmComputer(id)) whenConnected(id, function() { root.warmComputer(id) })
     scopeComputer(id)
     requestRoute("computer", id)
     openComputerRequested(id)
@@ -995,6 +997,113 @@ Item {
   property bool panelOpen: false
   property bool quickOpen: false
   property bool consoleOpen: false
+  property bool consoleFocused: false
+  readonly property bool requestsInConsole: consoleOpen && consoleFocused
+  // Inline plugin settings use Omarchy's existing persisted settings store.
+  readonly property var requestSettingDefinitions: [
+    { key: "request_popups", title: "Request Pop-ups", help: "Show requests with their buttons while the console isn't focused.", fallback: true },
+    { key: "popup_approvals", title: "Approvals", help: "Show approval requests.", fallback: true },
+    { key: "popup_logins", title: "Logins", help: "Show login requests.", fallback: true },
+    { key: "popup_questions", title: "Questions", help: "Show agents' questions.", fallback: true },
+    { key: "popup_dnd", title: "Show During Do Not Disturb", help: "Let request pop-ups appear during Do Not Disturb.", fallback: false },
+    { key: "popup_desktop_notifications", title: "Also Send Desktop Notifications", help: "Desktop notifications are always used when Request Pop-ups is off.", fallback: false }
+  ]
+  readonly property var requestSettingsSections: [{ id: "request_popups", title: "Request Pop-ups", settings: requestSettingDefinitions.map(function(d) {
+    return { key: d.key, title: d.title, help: d.help, type: "bool", scope: "console", value: root.requestBool(d.key), "default": d.fallback }
+  }) }]
+  function isRequestSetting(key) { return requestSettingDefinitions.some(function(d) { return d.key === key }) }
+  function requestBool(key) {
+    for (var i = 0; i < requestSettingDefinitions.length; i++) if (requestSettingDefinitions[i].key === key) {
+      var v = setting(key, requestSettingDefinitions[i].fallback)
+      return v === true || v === "true"
+    }
+    return false
+  }
+  function changeRequestSetting(key, value, undoing) {
+    var definition = requestSettingDefinitions.filter(function(d) { return d.key === key })[0]
+    if (!definition || !shell) return false
+    var before = requestBool(key), on = value === true || value === "true"
+    if (before === on) return true
+    var next = Object.assign({}, settings)
+    next[key] = on
+    if (!shell.updateEntryInline("io.zet.ibara", next)) {
+      setSettingError("", key, "ibara couldn't save this setting.")
+      return false
+    }
+    applySettings(next)
+    setSettingError("", key, "")
+    if (!undoing) settingsApplied("", [{ key: key, title: definition.title, before: String(before), after: String(on) }], definition.title + " is now " + (on ? "On." : "Off."))
+    return true
+  }
+  function resetRequestSettings() {
+    if (!shell) return false
+    var next = Object.assign({}, settings), changes = []
+    requestSettingDefinitions.forEach(function(d) {
+      var before = root.requestBool(d.key)
+      if (before !== d.fallback) changes.push({ key: d.key, title: d.title, before: String(before), after: String(d.fallback) })
+      next[d.key] = d.fallback
+    })
+    if (!changes.length) return true
+    if (!shell.updateEntryInline("io.zet.ibara", next)) { actionError = "ibara couldn't reset Request Pop-ups."; return false }
+    applySettings(next)
+    settingsApplied("", changes, "Request Pop-ups settings are back to their defaults.")
+    return true
+  }
+  property var hiddenRequestPopups: ({})
+  function hideRequestPopup(ref) {
+    var next = Object.assign({}, hiddenRequestPopups)
+    next[ref] = true
+    hiddenRequestPopups = next
+  }
+  function openRequest(item) {
+    if (shell && item) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: item.computer_id, focus: "request", ref: item.ref }))
+  }
+  function openRequestSettings() { if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "settings" })) }
+  readonly property var requestItems: approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
+  readonly property var popupRequests: !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
+    ? requestItems.filter(function(item) {
+        return !root.hiddenRequestPopups[item.ref] && root.requestKindEnabled(item.kind) && (item.kind !== "login" || !root.loginSourceElsewhere(item))
+      }) : []
+  function requestKindEnabled(kind) { return requestBool(kind === "approval" ? "popup_approvals" : kind === "login" ? "popup_logins" : "popup_questions") }
+  // Ordinary bar-widget plugins do not receive the first-party service proxy on stock
+  // Omarchy. Read its small persisted DND setting, also shared by notification clones.
+  readonly property var notificationService: shell && typeof shell.firstPartyServiceFor === "function" ? shell.firstPartyServiceFor("omarchy.notifications") : null
+  property bool persistedDnd: false
+  property bool dndRead: false
+  readonly property bool dndReady: !!notificationService || dndRead
+  readonly property bool requestDnd: notificationService ? notificationService.doNotDisturb : persistedDnd
+  function readRequestDnd() { if (!notificationService && !requestDndReader.running) requestDndReader.running = true }
+  Process {
+    id: requestDndReader
+    command: ["head", "-c", "8193", "--", Quickshell.env("HOME") + "/.local/state/omarchy/notifications.json"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.persistedDnd = text.length > 8192 || JSON.parse(text).dnd === true }
+        catch (error) { root.persistedDnd = text.trim() !== "" }
+        root.dndRead = true
+      }
+    }
+    onExited: { root.dndRead = true; Qt.callLater(root.syncRequestNotices) }
+  }
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.requestItems.length > 0 && !root.notificationService
+    triggeredOnStart: true
+    onTriggered: root.readRequestDnd()
+  }
+  RequestPopups { service: root }
+  HandBackPills { service: root }
+  onRequestsInConsoleChanged: Qt.callLater(root.syncRequestNotices)
+  property bool hadRequestItems: false
+  onRequestItemsChanged: {
+    // DND may have changed while idle. Read it before presenting new requests.
+    if (!notificationService && !hadRequestItems && requestItems.length) { dndRead = false; readRequestDnd() }
+    hadRequestItems = requestItems.length > 0
+    Qt.callLater(root.syncRequestNotices)
+  }
+  onRequestDndChanged: Qt.callLater(root.syncRequestNotices)
+  onSettingsChanged: Qt.callLater(root.syncRequestNotices)
   property bool mutating: false
   readonly property bool reading: activeReads.some(function(request) { return !!request })
   // Four read lanes: a 15-computer fleet bootstraps and polls without starving what the person asked for.
@@ -1049,6 +1158,34 @@ Item {
     ibaraStarter.running = true
     return true
   }
+  property var latestRelease: null
+  property string loadedPluginVersion: ""
+  readonly property bool staleConsole: !!(loadedPluginVersion && latestRelease && latestRelease.installed_version && StatusModel.versionCompare(loadedPluginVersion, latestRelease.installed_version) < 0)
+  FileView {
+    path: Qt.resolvedUrl("build.json")
+    onLoaded: { try { root.loadedPluginVersion = String(JSON.parse(text()).version || "") } catch (e) {} }
+  }
+  function restartBar() { Quickshell.execDetached(["omarchy", "restart", "shell"]) }
+  readonly property string updateAvailable: latestRelease && latestRelease.version && StatusModel.versionCompare(latestRelease.version, latestRelease.console_version) > 0 ? String(latestRelease.version) : ""
+  function behind(c) { return !!(c && c.version && latestRelease && latestRelease.version && StatusModel.versionCompare(c.version, latestRelease.version) < 0) }
+  function loadUpdateCheck(refresh) { if (!busy["update-check"]) { setBusy("update-check", "reading"); sideSend(refresh ? ["update-check", "--refresh"] : ["update-check"], { busyKey: "update-check" }) } }
+  property var seenIbaraUpdates: ({})
+  function noteIbaraUpdate(id, before, after) {
+    var u = after && after.ibara_update
+    if (!u || u.state === "running") return
+    var key = String(u.started_at) + ":" + u.state + ":" + String(u.shell)
+    var pending = updateAllRun && updateAllRun.action === "update_ibara" && updateAllRun.waiting.indexOf(id) !== -1
+    if (!consoleOpen && !pending) return
+    if (seenIbaraUpdates[id] === key) return
+    var recent = u.finished_at > Date.now() - 300000
+    var next = Object.assign({}, seenIbaraUpdates); next[id] = key; seenIbaraUpdates = next
+    if (!recent && !pending) return
+    if (pending && updateAllRun.baseline[id] === key) return
+    var text = u.state === "failed" ? "Update failed on " + computerLabelFor(id) + ": " + (u.message || "The update stopped before it finished.")
+      : "ibara " + u.version + " on " + computerLabelFor(id) + (u.shell === "deferred_locked" ? ". Its bar restarts after unlock." : "")
+    powerSettled(id, "update_ibara", text, u.state === "failed")
+  }
+  Timer { interval: 60000; running: true; repeat: true; triggeredOnStart: true; onTriggered: root.loadUpdateCheck(false) }
   // ---- What's New: the notes of the ibara update installed last, shown once.
   property var whatsNew: null
   function loadWhatsNew() { if (!busy["whats-new"]) { setBusy("whats-new", "reading"); sideSend(["whats-new"], { busyKey: "whats-new" }) } }
@@ -1208,6 +1345,7 @@ Item {
     var s = sessions[String(computerId || "")]
     return !!s && s.holds_control === true && s.connection === "ready" && !!s.controller_epoch && s.holds_control_epoch === s.controller_epoch
   }
+  readonly property var heldComputerIds: Object.keys(sessions).filter(function(id) { return root.holdsControlOn(id) }).sort()
   readonly property bool denied: connectionState === "unauthorized"
 
   function localPath(url) {
@@ -1247,7 +1385,7 @@ Item {
     if (panelOpen) { Qt.callLater(root.refreshComputerSessions); loadAttention() }
     else closePreviews()
     // Opening the console asks what happened while you were away and reads its settings again.
-    if (surface === "console" && consoleOpen) { loadAway(); loadConsoleSettings(); loadWhatsNew(); loadLoginSettings() }
+    if (surface === "console" && consoleOpen) { loadAway(); loadConsoleSettings(); loadWhatsNew(); loadLoginSettings(); loadUpdateCheck(false) }
     if (surface === "console" && consoleOpen && scopedComputerId) {
       if (!tasksLoaded && !readPending("tasks")) loadTasks()
       if (!artifactsLoaded && !readPending("artifacts")) loadArtifacts()
@@ -1361,6 +1499,7 @@ Item {
       error: { code: "DAEMON_UNAVAILABLE", message: message, retry_safe: !(sent && route.kind === "action") } }
   }
   function deliverDaemon(route, id, value) {
+    if (route.kind === "warm") return
     if (route.kind === "action") consumeAction(value)
     else if (route.kind === "read") consumeRead(route.lane, value)
     else if (route.kind === "pick") consumePick(value)
@@ -1582,6 +1721,51 @@ Item {
       "--op", "take_control", "--owner", s.owner_name, "--revision", s.ownership_revision])
     return true
   }
+  function connectingOn(computerId) {
+    return (!!pendingControl && pendingMutation === "operator-take-control" && pendingControl.computer_id === computerId) ||
+      (pendingMutation === "open-viewer" && pendingViewerComputerId === computerId) || !!viewerConnecting[computerId]
+  }
+  function controlBlockedReason(computerId) {
+    var s = sessions[String(computerId || "")]
+    if (!s) return "This computer is not available."
+    if (connectingOn(computerId)) return "Connecting…"
+    if (denied || s.connection === "unauthorized") return "You don't have access."
+    if (s.trust_state !== "verified") return "Pair this computer first."
+    if (s.connection !== "ready") return "This computer isn't answering."
+    if (s.interactive_control !== "available_if_exclusive") return "Take Control isn't available."
+    if (!s.controller_epoch || !s.owner_name || !s.ownership_revision) return "Still checking who has control."
+    if (mutating) return "Wait for the current action to finish."
+    return ""
+  }
+  function requestTakeControl(computerId, confirm) {
+    var reason = controlBlockedReason(computerId), s = sessions[computerId]
+    if (reason) { if (!connectingOn(computerId)) actionError = reason; return false }
+    if (holdsControlOn(computerId)) return viewerOpenOn(computerId) || openViewerFor(computerId)
+    // Only replacing another person asks first. The daemon still checks owner and revision.
+    if (/^operator:/.test(String(s.owner_name))) {
+      var owner = s.owner_name, revision = s.ownership_revision, epoch = s.controller_epoch
+      var endpoint = s.endpoint_id, binding = s.binding_revision, authorization = s.authorization_generation
+      if (typeof confirm !== "function") return false
+      confirm({ message: "Another person has control of " + computerLabelFor(computerId) + ". Take Over?",
+        confirmLabel: "Take Control", subject: computerId,
+        valid: function() { var now = root.sessions[computerId]; return !!now && now.controller_epoch === epoch && now.endpoint_id === endpoint && now.binding_revision === binding && now.authorization_generation === authorization && now.owner_name === owner && now.ownership_revision === revision },
+        run: function() { root.takeControlFor(computerId) } })
+      return true
+    }
+    return takeControlFor(computerId)
+  }
+  // Best effort on its own lane: older cores reject warm without a toast or a mutation lock.
+  property var warmAt: ({})
+  property int warmSequence: 0
+  function warmComputer(computerId) {
+    var id = String(computerId || ""), s = sessions[id], now = Date.now()
+    if (!s || s.connection !== "ready" || s.trust_state !== "verified" || !s.controller_epoch || denied || daemonDown) return false
+    if (warmAt[id] && now - warmAt[id] < 30000) return true
+    var next = Object.assign({}, warmAt); next[id] = now; warmAt = next
+    daemonSend("warm-" + generation + "-" + (++warmSequence),
+      ["operator-control", "--computer", id, "--epoch", s.controller_epoch, "--op", "warm"], { kind: "warm" })
+    return true
+  }
   function handBackFor(computerId) {
     if (!selectComputer(computerId)) return false
     var s = sessions[computerId]
@@ -1634,7 +1818,11 @@ Item {
     return true
   }
   function pollVisibleStatus() {
-    if (!panelOpen || denied) return
+    if (denied) return
+    if (!panelOpen) {
+      heldComputerIds.forEach(function(id) { if (Date.now() - Number(root.statusPolledAt[id] || 0) >= root.statusFastMs - 100) root.pollStatus(id) })
+      return
+    }
     var now = Date.now(), ids = statusComputerIds().slice(), fast = [], slow = []
     if (selectedComputerId && ids.indexOf(selectedComputerId) === -1) ids.push(selectedComputerId)
     var anyMoving = false, fresh = []
@@ -1666,7 +1854,7 @@ Item {
     for (var f = 0; f < fast.length && f < 8; f++) pollStatus(fast[f])
     for (var w = 0; w < slow.length && w < 4; w++) pollStatus(slow[w])
   }
-  Timer { id: statusTick; interval: root.statusFastMs; repeat: true; running: root.panelOpen && !root.denied; onTriggered: root.pollVisibleStatus() }
+  Timer { id: statusTick; interval: root.statusFastMs; repeat: true; running: (root.panelOpen || root.heldComputerIds.length > 0) && !root.denied; onTriggered: root.pollVisibleStatus() }
   readonly property string previewLimitNotice: "Not previewed: at most 20 computers preview at once. Scroll or filter to see this one."
   // `large`: the wall shows these as at most four large cards, which preview at selected quality
   // at the Fleet picture interval (as tiles do), so their pictures stay sharp.
@@ -2065,6 +2253,7 @@ Item {
   function openViewerFor(computerId) {
     if (!holdsControlOn(computerId) || mutating) { actionError = mutating ? "Wait for the current action to finish." : "Choose Take Control first. Open Viewer works while you hold control."; return false }
     var epoch = sessions[String(computerId)] && sessions[String(computerId)].controller_epoch
+    pendingViewerComputerId = String(computerId)
     startHelper("open-viewer", ["open-viewer", "--computer", String(computerId)].concat(epoch ? ["--epoch", String(epoch)] : []))
     return true
   }
@@ -2072,13 +2261,73 @@ Item {
   // Open Viewer answers), kept while that process runs, so the console offers Open Viewer or
   // Close Viewer as it really is, also after the person closes the viewer window themselves.
   property var viewers: ({})
+  property var viewerConnecting: ({})
+  property var viewerScreens: ({})
+  property string pendingViewerComputerId: ""
+  property var viewerClosed: ({})
+  function keepControl(computerId) {
+    var next = Object.assign({}, viewerClosed); delete next[computerId]; viewerClosed = next
+  }
+  function viewerDidClose(computerId) {
+    var handingBack = pendingMutation === "operator-handback" && pendingControl && pendingControl.computer_id === computerId
+    if (viewerConnecting[computerId] && holdsControlOn(computerId) && !handingBack) actionError = computerLabelFor(computerId) + ": the viewer closed before connecting. Try Open Viewer."
+    var waiting = Object.assign({}, viewerConnecting); delete waiting[computerId]; viewerConnecting = waiting
+    if (!holdsControlOn(computerId) || handingBack) return
+    var next = Object.assign({}, viewerClosed); next[computerId] = true; viewerClosed = next
+  }
   function viewerOpenOn(computerId) { return !!viewers[String(computerId || "")] }
   function noteViewer(computerId, pid) {
-    var id = String(computerId || ""), next = Object.assign({}, viewers)
+    var id = String(computerId || ""), next = Object.assign({}, viewers), waiting = Object.assign({}, viewerConnecting)
     pid = Number(pid)
-    if (id && Number.isInteger(pid) && pid > 0) next[id] = pid
-    else delete next[id]
+    if (id && Number.isInteger(pid) && pid > 0) {
+      next[id] = pid; keepControl(id)
+      waiting[id] = { pid: pid, deadline: Date.now() + 15000 }
+    } else { delete next[id]; delete waiting[id] }
+    viewerConnecting = waiting
     if (!sameValue(viewers, next)) viewers = next
+  }
+  // A launched process isn't a visible viewer yet. Stop Connecting once its window maps.
+  Timer {
+    interval: Object.keys(root.viewerConnecting).length ? 150 : 300
+    repeat: true
+    running: Object.keys(root.viewerConnecting).length > 0 || Object.keys(root.sessions).some(function(id) { return root.holdsControlOn(id) })
+    onTriggered: if (!viewerWindows.running) {
+      viewerWindows.checked = root.viewerConnecting
+      viewerWindows.running = true
+    }
+  }
+  Process {
+    id: viewerWindows
+    property var checked: ({})
+    command: ["hyprctl", "-j", "clients"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var clients = []
+        try { clients = JSON.parse(text) } catch (error) {}
+        var pids = Array.isArray(clients) ? clients.filter(function(c) { return c.mapped === true && c.hidden !== true }).map(function(c) { return Number(c.pid) }) : []
+        var screens = Object.assign({}, root.viewerScreens)
+        for (var computer in root.viewers) {
+          var client = clients.find(function(c) { return Number(c.pid) === Number(root.viewers[computer]) && c.mapped === true })
+          if (!client || !Array.isArray(client.at) || !Array.isArray(client.size)) continue
+          var x = client.at[0] + client.size[0] / 2, y = client.at[1] + client.size[1] / 2
+          var screen = Quickshell.screens.find(function(s) { return x >= s.x && x < s.x + s.width && y >= s.y && y < s.y + s.height })
+          if (screen) screens[computer] = screen.name
+        }
+        if (!root.sameValue(root.viewerScreens, screens)) root.viewerScreens = screens
+        var waiting = Object.assign({}, root.viewerConnecting)
+        for (var id in viewerWindows.checked) {
+          var pin = viewerWindows.checked[id]
+          if (!waiting[id] || waiting[id].pid !== pin.pid) continue
+          if (pids.indexOf(pin.pid) !== -1) delete waiting[id]
+          else if (Date.now() >= pin.deadline) {
+            delete waiting[id]
+            root.actionError = root.computerLabelFor(id) + ": the viewer didn't appear. Try Open Viewer."
+          }
+        }
+        root.viewerConnecting = waiting
+      }
+    }
   }
   // Close Viewer closes only the viewer: the computer stays yours and paused until Hand Back.
   function closeViewerFor(computerId) {
@@ -2088,7 +2337,7 @@ Item {
     closer.command = ["sh", "-c", "case \"$(cat /proc/$1/comm 2>/dev/null)\" in ibara-view|moonlight) kill -TERM \"$1\";; esac", "sh", String(pid)]
     closer.running = true
     noteViewer(id, 0)
-    actionNotice = "Viewer closed. " + computerLabelFor(id) + " stays yours and paused until you choose Hand Back."
+    viewerDidClose(id)
     return true
   }
   // Every 1.5 s while a viewer is open: which of them still run (ibara-view, or Moonlight for an
@@ -2117,6 +2366,7 @@ Item {
         for (var id in root.viewers) {
           var pid = root.viewers[id]
           if (viewerCheck.checked.indexOf(pid) === -1 || alive.indexOf(pid) !== -1) next[id] = pid
+          else root.viewerDidClose(id)
         }
         if (!root.sameValue(root.viewers, next)) root.viewers = next
       }
@@ -2588,9 +2838,11 @@ Item {
       next[id] = Object.assign({}, s, { needs_person: want })
     }
     if (next) publishSessions(next)
-    notifyApprovals()
-    notifyLogins()
-    closeStaleApprovalNotices()
+    // Drop local dismissals once the request is gone; stale refs never grow forever.
+    var hidden = ({})
+    requestItems.forEach(function(item) { if (root.hiddenRequestPopups[item.ref]) hidden[item.ref] = true })
+    hiddenRequestPopups = hidden
+    syncRequestNotices()
   }
   // Approve, Deny or Always Allow, from the console or a desktop notification. One no longer
   // listed (answered elsewhere, or gone) is said so rather than ignored. Always Allow is only for
@@ -2623,15 +2875,34 @@ Item {
   // or dismissed, which tells the agent nobody will answer. The toast leaves once the computer
   // confirms. ibara older than this console on either end can't do either; then Dismiss puts
   // the question away here only (an update of that computer closes it for good).
-  function answerQuestion(ref, answer) {
+  function answerQuestion(ref, answer, handBack) {
     var item = questionByRef(ref), text = String(answer || "")
     if (!item || busy["answer:" + ref] || !text.trim() || text.length > 1000) return false
     if (item.options.length && item.options.indexOf(text) === -1) return false
     if (item.unreachable) { actionNotice = (item.label || computerLabelFor(item.computer_id)) + " isn't answering right now. You can answer once it's back."; return false }
     sendToComputer("operator-answer-attention", item.computer_id, [ref, "--answer", text],
-      { ref: ref, question: true, answer: text, label: item.label || computerLabelFor(item.computer_id) }, "answer:" + ref)
+      { ref: ref, question: true, answer: text, handBack: handBack || null, label: item.label || computerLabelFor(item.computer_id) }, "answer:" + ref)
     return true
   }
+  property var questionHandBacks: []
+  function answerAndHandBack(ref, answer) {
+    var item = questionByRef(ref), s = item ? sessions[item.computer_id] : null
+    if (!s || !holdsControlOn(item.computer_id) || mutating) return false
+    return answerQuestion(ref, answer, { id: item.computer_id, epoch: s.controller_epoch,
+      endpoint: s.endpoint_id, binding: s.binding_revision, authorization: s.authorization_generation,
+      owner: s.owner_name, revision: s.ownership_revision })
+  }
+  function finishQuestionHandBack() {
+    if (mutating || !questionHandBacks.length) return
+    var pin = questionHandBacks[0], s = sessions[pin.id]
+    questionHandBacks = questionHandBacks.slice(1)
+    if (s && holdsControlOn(pin.id) && s.controller_epoch === pin.epoch && s.endpoint_id === pin.endpoint &&
+        s.binding_revision === pin.binding && s.authorization_generation === pin.authorization &&
+        s.owner_name === pin.owner && s.ownership_revision === pin.revision) handBackFor(pin.id)
+    else actionError = computerLabelFor(pin.id) + ": answered, but control changed. Check Hand Back."
+    if (!mutating) Qt.callLater(root.finishQuestionHandBack)
+  }
+  onMutatingChanged: if (!mutating) Qt.callLater(root.finishQuestionHandBack)
   function dismissQuestion(ref) {
     var item = questionByRef(ref)
     if (!item || busy["answer:" + ref]) return false
@@ -2661,18 +2932,28 @@ Item {
     } else {
       attention = attention.filter(function(entry) { return entry.ref !== route.ref })
       actionNotice = route.dismiss ? "Dismissed the question on " + route.label + "." : "Answered on " + route.label + ": " + StatusModel.clip(route.answer, 120)
+      if (route.handBack) { questionHandBacks = questionHandBacks.concat([route.handBack]); Qt.callLater(root.finishQuestionHandBack) }
     }
     loadAttention()
   }
   // One desktop notification per new approval, with Approve and Deny on it, Always Allow on a
   // send, spend or delete, and Allow and Not Now on an agent's request to stop asking (notify-send --action;
-  // the Omarchy shell's notification server shows the actions). Each waits in its own process,
+  // a notification server that renders actions shows the buttons). Each waits in its own process,
   // which prints the notification's id, then the action chosen.
   property var approvalNotices: ({})
   property var noticedApprovals: ({})
-  function notifyApprovals() {
-    if (!consoleBool("approval_notifications", true)) return
+  function desktopRequestEnabled(kind) {
+    return !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd")) && requestKindEnabled(kind) &&
+      (!requestBool("request_popups") || requestBool("popup_desktop_notifications"))
+  }
+  function syncRequestNotices() {
+    closeStaleApprovalNotices()
+    notifyApprovals()
     notifyQuestions()
+    notifyLogins()
+  }
+  function notifyApprovals() {
+    if (!desktopRequestEnabled("approval")) return
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < approvals.length; i++) {
       var item = approvals[i]
@@ -2683,13 +2964,14 @@ Item {
       var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name })
       var actions = item.stopAsking ? ["-A", "approve=Allow", "-A", "deny=Not Now"]
         : ["-A", "approve=Approve", "-A", "deny=Deny"].concat(item.effect ? ["-A", "always=Always Allow"] : [])
-      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "critical", "-t", "0"].concat(actions, [name + (item.stopAsking ? " needs your answer" : " needs your approval"), StatusModel.approvalNoticeBody(item, name, sessions[item.computer_id])])
+      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "normal", "-t", "15000", "-A", "default=Open"].concat(actions, ["--", name + (item.stopAsking ? " needs your answer" : " needs your approval"), StatusModel.approvalNoticeBody(item, name, sessions[item.computer_id])])
       notice.running = true
       notices[item.ref] = notice
     }
     if (fresh) { noticedApprovals = seen; approvalNotices = notices }
   }
   function notifyQuestions() {
+    if (!desktopRequestEnabled("question")) return
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < questions.length; i++) {
       var item = questions[i]
@@ -2699,10 +2981,11 @@ Item {
       var name = item.label || computerLabelFor(item.computer_id)
       var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name, question: true, options: item.options.slice() })
       var actions = []
-      for (var j = 0; j < item.options.length; j++) actions.push("-A", "option-" + j + "=" + StatusModel.titleCase(item.options[j]))
-      if (!actions.length) actions = ["-A", "open=Open Console"]
-      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "critical", "-t", "0"].concat(actions,
-        [name + " needs your answer", StatusModel.requestNoticeBody(item, name, sessions[item.computer_id], item.summary)])
+      for (var j = 0; item.options.length <= 2 && j < item.options.length; j++) actions.push("-A", "option-" + j + "=" + StatusModel.titleCase(item.options[j]))
+      if (!actions.length) actions = ["-A", "open=Open"]
+      if (sessions[item.computer_id] && sessions[item.computer_id].interactive_control === "available_if_exclusive") actions.push("-A", "take=Take Control")
+      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "normal", "-t", "15000", "-A", "default=Open"].concat(actions,
+        ["--", name + " needs your answer", StatusModel.requestNoticeBody(item, name, sessions[item.computer_id], item.summary)])
       notice.running = true
       notices[item.ref] = notice
     }
@@ -2712,16 +2995,18 @@ Item {
     var text = String(line || "").trim()
     if (/^[0-9]{1,10}$/.test(text) && !notice.noticeId) { notice.noticeId = text; closeStaleApprovalNotices(); return }
     if (notice.answered) return
-    if (text === "open") {
+    if (text === "open" || text === "default") {
       notice.answered = true
-      if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: notice.computerId }))
+      openRequest({ computer_id: notice.computerId, ref: notice.ref })
+    } else if (notice.question && text === "take") {
+      if (!takeControlFor(notice.computerId) && !consoleOpen) queueNotice({ title: "ibara", body: actionError || "Take Control could not start. Open the console to check this computer." })
     } else if (notice.question && /^option-[0-9]+$/.test(text)) {
       var index = Number(text.substring(7))
       if (index >= notice.options.length) return
       notice.answered = true
       if (!answerQuestion(notice.ref, notice.options[index]) && !consoleOpen)
         queueNotice({ title: "ibara", body: "That question on " + notice.label + " could not be answered. Open the ibara console to check whether it is still waiting." })
-    } else if (notice.login && (text === "share" || text === "decline")) {
+    } else if (notice.login && (text === "share" || text === "share_all" || text === "decline")) {
       notice.answered = true
       var item = loginByRef(notice.ref)
       if (item) answerLogin(notice.ref, StatusModel.loginDecisions(item.login.sites, {}, text), false, true)
@@ -2738,15 +3023,22 @@ Item {
   // An approval or a login request answered anywhere else, or gone, closes its notification. One
   // from a computer that isn't answering stays open: its request still waits there.
   function closeStaleApprovalNotices() {
+    var seen = Object.assign({}, noticedApprovals)
     for (var ref in approvalNotices) {
       var notice = approvalNotices[ref]
-      if (notice.answered || !notice.noticeId || approvals.some(function(item) { return item.ref === ref }) || logins.some(function(item) { return item.ref === ref }) || questions.some(function(item) { return item.ref === ref })) continue
-      if (attentionUnreachable.indexOf(notice.computerId) !== -1) continue
+      var kind = notice.question ? "question" : notice.login ? "login" : "approval"
+      var pending = requestItems.some(function(item) { return item.ref === ref })
+      if (notice.answered || !notice.noticeId || (pending && desktopRequestEnabled(kind))) continue
       notice.answered = true
+      if (pending) delete seen[ref] // Settings/focus/DND may allow a new notification later.
       var closer = oneShotComponent.createObject(root)
       closer.command = ["busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "CloseNotification", "u", notice.noticeId]
       closer.running = true
     }
+    requestItems.forEach(function(item) { if (!desktopRequestEnabled(item.kind)) delete seen[item.ref] })
+    var pendingSeen = ({})
+    requestItems.forEach(function(item) { if (seen[item.ref]) pendingSeen[item.ref] = true })
+    noticedApprovals = pendingSeen
   }
 
   // ---- login sharing (docs/reference.md, Logins). This computer can be the sharing computer: the
@@ -3022,21 +3314,21 @@ Item {
   // Don't Share (for every site it names). While no computer shares, it says where to turn
   // sharing on; where another computer shares, it asks there, not here.
   function notifyLogins() {
-    if (!consoleBool("approval_notifications", true) || !loginSettings) return
+    if (!desktopRequestEnabled("login") || !loginSettings) return
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < logins.length; i++) {
       var item = logins[i]
       if (seen[item.ref]) continue
       seen[item.ref] = true
       fresh = true
-      if (loginSourceElsewhere(item)) continue
+      if (loginSourceElsewhere(item)) { delete seen[item.ref]; continue }
       var name = item.label || computerLabelFor(item.computer_id)
       var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name, login: true })
       var sites = item.login.sites.map(function(s) { return s.site }).join(", ")
-      var actions = loginSettings.enabled ? ["-A", "share=Share", "-A", "decline=Don't Share"] : ["-A", "open=Open Console"]
+      var actions = loginSettings.enabled ? ["-A", "share=Share", "-A", "share_all=Share With All Computers", "-A", "decline=Don't Share"] : ["-A", "open=Open Console"]
       var body = StatusModel.requestNoticeBody(item, name, sessions[item.computer_id], "Use your logins for " + sites)
         + (loginSettings.enabled ? "" : "\nLogin sharing is off. Open Console to turn it on.")
-      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "critical", "-t", "0"].concat(actions, [name + " needs your approval", body])
+      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "normal", "-t", "15000", "-A", "default=Open"].concat(actions, ["--", name + " needs your approval", body])
       notice.running = true
       notices[item.ref] = notice
     }
@@ -3070,7 +3362,7 @@ Item {
   function power(computerId, action, apart) {
     var id = String(computerId || "")
     if (!sessions[id] || ["restart", "shutdown", "sleep", "lock", "update_ibara", "update_omarchy"].indexOf(action) === -1 || busy["power:" + id]) return false
-    var route = { action: action }
+    var route = { action: action, tracksIbaraUpdate: sessions[id].ibara_update_supported === true }
     if (apart === true) {
       route.apart = true
       route.failed = function(message) { root.powerSettled(id, action, root.computerLabelFor(id) + " didn't update. " + message, true) }
@@ -3080,21 +3372,26 @@ Item {
   }
   function powerSettled(id, action, text, failed) {
     powerAnswered(id, action, text, failed)
-    if (!updateAllRun) return
+    if (!updateAllRun || updateAllRun.action !== action) return
     var waiting = updateAllRun.waiting.filter(function(other) { return other !== id })
-    updateAllRun = { action: updateAllRun.action, waiting: waiting, last: updateAllRun.last }
+    updateAllRun = { action: updateAllRun.action, waiting: waiting, last: updateAllRun.last, baseline: updateAllRun.baseline }
     if (!waiting.length) sendLastUpdate()
   }
   // ---- Update ibara on All and Update Omarchy on All: `action` (update_ibara or update_omarchy)
   // on each of these computers at once, and on `last` (this computer) once every other one has
-  // answered, so its own update can't cut the others off.
+  // finished (ibara) or answered (Omarchy), so its own update cannot cut the others off.
   // updateAllRun: null, or { action, waiting: [ids not answered yet], last }.
   property var updateAllRun: null
   function updateAll(action, ids, last) {
     if (updateAllRun || ["update_ibara", "update_omarchy"].indexOf(action) === -1) return false
     var sent = []
     for (var i = 0; i < ids.length; i++) if (power(ids[i], action, true)) sent.push(String(ids[i]))
-    updateAllRun = { action: action, waiting: sent, last: String(last || "") }
+    var baseline = ({})
+    for (var i = 0; i < sent.length; i++) {
+      var u = sessions[sent[i]] && sessions[sent[i]].ibara_update
+      baseline[sent[i]] = u ? String(u.started_at) + ":" + u.state + ":" + String(u.shell) : ""
+    }
+    updateAllRun = { action: action, waiting: sent, last: String(last || ""), baseline: baseline }
     if (!sent.length) sendLastUpdate()
     return true
   }
@@ -3174,6 +3471,7 @@ Item {
     return true
   }
   function changeSetting(computerId, key, value, undoing) {
+    if (!computerId && isRequestSetting(key)) return changeRequestSetting(key, value, undoing)
     var setting = StatusModel.findSetting(settingsList(computerId), key)
     if (!setting) return false
     setSettingError(computerId, key, "")
@@ -3181,6 +3479,7 @@ Item {
       settingKey: key, undoing: undoing === true, before: [{ key: key, title: setting.title, value: StatusModel.settingText(setting.value) }] })
   }
   function resetSetting(computerId, key) {
+    if (!computerId && isRequestSetting(key)) { var d = requestSettingDefinitions.filter(function(d) { return d.key === key })[0]; return changeRequestSetting(key, d.fallback) }
     var setting = StatusModel.findSetting(settingsList(computerId), key)
     if (!setting) return false
     setSettingError(computerId, key, "")
@@ -3188,6 +3487,7 @@ Item {
       settingKey: key, before: [{ key: key, title: setting.title, value: StatusModel.settingText(setting.value) }] })
   }
   function resetSection(computerId, sectionId) {
+    if (!computerId && sectionId === "request_popups") return resetRequestSettings()
     var list = settingsList(computerId), section = null
     for (var i = 0; i < list.length; i++) if (list[i].id === sectionId) section = list[i]
     if (!section) return false
@@ -3199,6 +3499,7 @@ Item {
   function restoreSettings(computerId, changes) {
     for (var i = 0; i < changes.length; i++) {
       var change = changes[i]
+      if (!computerId && isRequestSetting(change.key)) { changeRequestSetting(change.key, change.before, true); continue }
       setSettingError(computerId, change.key, "")
       sendSettings(computerId, ["set", change.key, String(change.before)], { busyKey: "setting:" + String(computerId || "") + ":" + change.key,
         settingsAction: "set", settingKey: change.key, undoing: true, before: [{ key: change.key, title: change.title, value: change.after }] })
@@ -3492,6 +3793,11 @@ Item {
       var older = !!error && ["update_ibara", "update_omarchy"].indexOf(route.action) !== -1 && error.code === "INVALID_ARGUMENT"
       if (older) plain = name + " runs an older ibara. " + (route.action === "update_ibara" ? "Update it once at that computer (ibara update), then Update ibara works." : "Choose Update ibara first.")
       if (error) {
+        if (route.apart && route.action === "update_ibara" && error.retry_safe === false) {
+          powerAnswered(id, route.action, "Waiting for the update result on " + name + ".", true)
+          recheckComputer(id)
+          return
+        }
         if (route.apart) powerSettled(id, route.action, older ? plain : name + " didn't update. " + (plain || "ibara couldn't reach it."), true)
         else reportError(plain || "ibara couldn't do that on " + name + ".", id, error)
         return
@@ -3503,8 +3809,15 @@ Item {
       else if (route.action === "lock") said = name + "'s screen is locked."
       else if (route.action === "update_ibara") said = name + ": " + (StatusModel.clip(result.message, 200) || (result.state === "current" ? "ibara is already up to date." : "ibara is updating to the latest release. It may restart its bar when it finishes."))
       else said = name + ": " + (StatusModel.clip(result.message, 200) || (result.state === "running" ? "Omarchy is already updating on this computer." : "Omarchy is updating. The computer stays usable; it says when a restart is needed."))
-      if (route.apart) powerSettled(id, route.action, said, false)
+      var awaitingIbara = route.action === "update_ibara" && ["started", "running"].indexOf(result.state) !== -1
+      // Older daemons accept the same plain update, but cannot send a terminal progress record.
+      if (route.apart && (!awaitingIbara || !route.tracksIbaraUpdate)) powerSettled(id, route.action, said, result.state === "busy")
+      else if (route.action === "update_ibara") powerAnswered(id, route.action, said, result.state === "busy")
       else actionNotice = said
+      if (awaitingIbara) {
+        updateSession(id, { ibara_update: { state: "running", version: "", started_at: Date.now(), finished_at: 0, message: "" } })
+        pollStatus(id)
+      }
       // It stops answering now; the card says why, and dims, until it answers again.
       if (["restart", "shutdown", "sleep"].indexOf(route.action) !== -1) updateSession(id, { power_state: route.action, connection: "offline" })
       // Its card says Updating Omarchy… at once; the next status read says how it goes.
@@ -3524,9 +3837,11 @@ Item {
     } else if (op === "away") {
       // Older cores have no timeline; the fleet simply shows none.
       if (!error) { var awayNow = StatusModel.awayView(data); if (!sameValue(away, awayNow)) away = awayNow }
+    } else if (op === "update-check") {
+      if (!error) latestRelease = data
     } else if (op === "whats-new") {
       // Older cores have no What's New; nothing shows.
-      whatsNew = !error && typeof data.version === "string" && data.version ? { version: data.version, notes: (Array.isArray(data.notes) ? data.notes : []).map(function(n) { return String(n) }) } : null
+      whatsNew = !error && typeof data.version === "string" && data.version ? { version: data.version, from: String(data.from || ""), notes: StatusModel.releaseNotes(data, String(data.from || "")) } : null
     } else if (op === "unattended-boot") {
       // Older cores have no such command; the entry simply doesn't show.
       unattendedBootSections = error ? [] : StatusModel.unattendedBootSections(data)
@@ -3815,6 +4130,9 @@ Item {
             locked: authenticated.locked === true,
             disk_password: authenticated.disk_password !== undefined ? authenticated.disk_password === true : identity.disk_password === true,
             omarchy_update: StatusModel.omarchyUpdateView(authenticated.omarchy_update),
+            ibara_update: StatusModel.ibaraUpdateView(authenticated.ibara_update),
+            ibara_update_supported: authenticated.ibara_update !== undefined,
+            version: StatusModel.clip(authenticated.version, 64),
             video: StatusModel.videoView(authenticated.video)
           })
           publishSessions(statusSessions)
@@ -4008,6 +4326,7 @@ Item {
     mutating = false
     var kind = pendingMutation
     pendingMutation = ""
+    pendingViewerComputerId = ""
     var control = pendingControl
     if (kind === "operator-take-control" || kind === "operator-handback") pendingControl = null
     var scope = actionScope
@@ -4103,13 +4422,15 @@ Item {
         publishSessions(refreshed)
         // The viewer Take Control opened; Hand Back closes it.
         noteViewer(control.computer_id, kind === "operator-take-control" && proof.viewer_started === true ? proof.viewer_pid : 0)
+        if (kind === "operator-handback") keepControl(control.computer_id)
         // Hand Back lets agents work again (owner "none") unless someone paused them: a person
         // (before or while holding control), or ibara while it settles the computer.
         actionNotice = kind === "operator-take-control" ?
-          "You have control. The viewer is opening; Super+Alt+Escape switches your keys between the two computers. Closing the viewer doesn't hand back, so choose Hand Back when you're done." :
+          computerLabelFor(control.computer_id) + ": you have control." :
           reply.owner === "none" ? "You handed back control. Its agents can work again." :
           reply.pause_origin === "system" ? "You handed back control. Its agents stay paused until ibara has settled the computer." :
           "You handed back control. Its agents stay paused because a person paused them; choose Resume to let them work again."
+        if (kind === "operator-take-control" && proof.viewer_started !== true) actionError = computerLabelFor(control.computer_id) + ": the viewer didn't open. Try Open Viewer."
         return
       }
       actionError = ""
@@ -4148,6 +4469,7 @@ Item {
     connectDaemon()
     refresh()
     loadConsoleSettings()
+    readRequestDnd()
     loadAttention()
     loadLoginSettings()
   }
@@ -4166,6 +4488,8 @@ Item {
       root.pollFollowedTasks()
       // Also re-check any computer this operator holds, so replacement or a restart shows promptly.
       var ids = [root.selectedComputerId]
+      if (root.updateAllRun && root.updateAllRun.action === "update_ibara") ids = ids.concat(root.updateAllRun.waiting)
+      for (var updating in root.sessions) if (root.sessions[updating].ibara_update && root.sessions[updating].ibara_update.state === "running" && ids.indexOf(updating) === -1) ids.push(updating)
       for (var id in root.sessions) if (root.holdsControlOn(id) && ids.indexOf(id) === -1) ids.push(id)
       for (var i = 0; i < ids.length; i++) if (ids[i]) root.pollStatus(ids[i])
     }

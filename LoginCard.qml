@@ -25,6 +25,17 @@ Toast {
   readonly property var sites: login ? login.sites : []
   readonly property bool several: sites.length > 1
   readonly property string ref: item ? String(item.ref) : ""
+  readonly property string computerId: item ? String(item.computer_id || "") : ""
+  property bool warmed: false
+  function warm() { if (visible && !warmed && service && computerId) warmed = service.warmComputer(computerId) }
+  Component.onCompleted: warm()
+  onServiceChanged: { warmed = false; warm() }
+  onVisibleChanged: { warmed = false; warm() }
+  onComputerIdChanged: { warmed = false; warm() }
+  Connections {
+    target: root.service
+    function onSessionsChanged() { root.warm() }
+  }
   readonly property string name: item ? String(item.label || (service ? service.computerLabelFor(item.computer_id) : "")) : ""
   readonly property var settings: service ? service.loginSettings : null
   readonly property string browser: service ? service.loginBrowserName : "your browser"
@@ -64,7 +75,7 @@ Toast {
     if (!service || !login || answering || unreachable) return
     if (choice !== "decline" && !tickedCount) return
     chosen = choice
-    service.answerLogin(ref, StatusModel.loginDecisions(sites, unticked, choice), false)
+    service.answerLogin(ref, StatusModel.loginDecisions(sites, unticked, choice), false, popup)
   }
   function retry() {
     if (!service || !outcome || answering) return
@@ -94,9 +105,9 @@ Toast {
   // The console, when the card is in its stack (Toasts sets it); null in the quick panel.
   property var host: null
 
-  edge: Color.urgent
+  edge: popup ? tokens.humanColor : Color.urgent
   tinted: true
-  dismissable: false
+  dismissable: popup
   holding: detailsOpen
   firstControl: mode === "answer" ? shareButton : mode === "signedOut" ? retryButton : mode === "off" && !turnOnReason ? turnOnButton : detailsButton
   Accessible.name: name + " needs your approval: " + (item ? item.summary : "")
@@ -107,15 +118,15 @@ Toast {
     Copy {
       id: headingText
       width: Math.min(implicitWidth, parent.width - (askedText.visible ? askedText.implicitWidth + parent.spacing : 0))
-      text: root.name + " needs your approval"
+      text: root.popup ? StatusModel.requestHeading(root.item, root.name, root.service && root.item ? root.service.sessions[root.item.computer_id] : null) : root.name + " needs your approval"
       font.bold: true
-      color: root.tokens.textTint(root.tokens.attentionColor)
+      color: root.tokens.textTint(root.popup ? root.edge : root.tokens.attentionColor)
       wrapMode: Text.NoWrap
       elide: Text.ElideRight
     }
     Copy {
       id: askedText
-      visible: text !== "" && !root.compact
+      visible: text !== "" && !root.compact && !root.popup
       text: root.unreachable ? "not answering right now" : root.asked
       color: root.unreachable ? root.tokens.textTint(root.tokens.pausedColor) : root.tokens.dim
       font.pixelSize: Style.font.bodySmall
@@ -126,12 +137,14 @@ Toast {
   // The request in words, whole: "codex@laptop, working on “…” on AcePC AK2, wants your login for sos.ok.gov".
   Copy {
     width: parent.width
-    text: root.item ? root.item.summary : ""
+    text: root.popup ? StatusModel.requestPopupText(root.item) : root.item ? root.item.summary : ""
+    maximumLineCount: root.popup ? 1 : 2147483647
+    elide: Text.ElideRight
     font.pixelSize: root.compact ? Style.font.bodySmall : Style.font.body
   }
   // Several sites: a tick for each; only the ticked ones are shared.
   Flow {
-    visible: root.several && (root.mode === "answer" || root.mode === "off")
+    visible: !root.popup && root.several && (root.mode === "answer" || root.mode === "off")
     width: parent.width
     spacing: Style.space(6)
     Repeater {
@@ -159,6 +172,8 @@ Toast {
   Copy {
     visible: text !== ""
     width: parent.width
+    maximumLineCount: root.popup ? 1 : 2147483647
+    elide: Text.ElideRight
     text: root.mode === "older" ? "ibara on this computer can't share logins. Update ibara here to answer this."
       : root.mode === "elsewhere" ? "Answer this on " + root.elsewhere + "."
       : root.mode === "off" ? (root.turnOnReason ? "Login sharing is off. " + root.turnOnReason : "Login sharing is off. Turn it on to share your login from " + root.browser + " on this computer.")
@@ -170,7 +185,7 @@ Toast {
   }
   Flickable {
     id: detailsBox
-    visible: root.detailsOpen
+    visible: root.detailsOpen && !root.popup
     width: parent.width
     height: Math.min(factsColumn.implicitHeight, Style.space(root.compact ? 120 : 200))
     contentWidth: width
@@ -202,6 +217,7 @@ Toast {
     spacing: Style.space(8)
     ActionButton {
       id: shareButton
+      // Sharing remains independent of the person's remote desktop control.
       visible: root.mode === "answer"
       label: root.answering && root.chosen === "share" ? "Sharing…" : "Share"
       role: "primary"
@@ -255,8 +271,17 @@ Toast {
       Accessible.name: "Don't share on " + root.name + ": " + (root.item ? root.item.summary : "")
       onClicked: if (!blocked) root.answer("decline")
     }
+    TakeControlButton {
+      service: root.service
+      host: root.host
+      computerId: root.computerId
+      visible: !root.popup && computerId !== "" && (!root.service || !root.service.holdsControlOn(computerId) || connecting)
+      size: "small"
+      role: "secondary"
+    }
     ActionButton {
       id: detailsButton
+      visible: !root.popup
       label: root.detailsOpen ? "Hide Details" : "Details"
       role: "quiet"
       size: "small"
@@ -265,7 +290,7 @@ Toast {
       onClicked: root.toggleDetails()
     }
     ActionButton {
-      visible: root.detailsOpen && root.mode === "answer"
+      visible: root.detailsOpen && !root.popup && root.mode === "answer"
       label: root.answering && root.chosen === "never" ? "Answering…" : "Never Share"
       role: "danger"
       size: "small"

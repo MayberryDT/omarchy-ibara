@@ -1,9 +1,27 @@
 # Changelog
 
+## Unreleased — October 1, 2026
+
+- Floating Hand Back pills stay above the viewer; Ctrl+Alt+Shift+H hands back directly inside the viewer. Questions can offer Done & Hand Back.
+
+- Update ibara distinguishes person control, person pauses and agent work; idle and older computers remain updatable, including through Update All.
+- Cancel deferred standing-toast updates when the console is unloaded on close.
+- Draw request pop-ups in ibara's service, using the shared console cards and answer handlers. Add settings for the pop-ups, request kinds, Do Not Disturb and optional desktop notifications.
+- Open the exact request from a card or desktop notification. Keep dismissed pop-up requests answerable in the console, limit the stack to three, and remove cards when requests end.
+- Shorten and escape desktop notification text; add Open and Share With All Computers to the fallback.
+## Unreleased — Update Awareness and Results
+
+- Show ibara versions, available releases and notes in System, Fleet Actions and the quick panel/bar hint.
+- Show update progress and outcome toasts; update only computers behind the checked release and update this computer after the others finish.
+- Unknown request kinds offer Update ibara Here. A stale packaged bar can be restarted from System.
+
 The plugin ships inside ibara's `ibara` package, and `ibara update` updates both together. ibara's own [changelog](https://github.com/MayberryDT/ibara/blob/main/CHANGELOG.md) lists what each release changed for the whole of ibara.
 
 ## Unreleased
 
+- The bar mark matches the other icons’ text color, size and spacing, with a clearer i at bar size. Its attention square and count badge use the bar’s theme colors, with no border on a transparent bar.
+
+- Take Control starts in one click, shows Connecting immediately, and appears on question and login cards. Only replacing another person asks first. Done & Hand Back answers a question before returning control; several options require a choice. Closing the viewer offers Hand Back and Keep Control. Opening a computer or approaching its Take Control button warms the stream, at most once every 30 seconds per computer.
 - Console text uses one theme-based tint helper across activity, requests, toasts and computer tabs. State and effect words have readable colors, times and technical references recede, and structured details separate dim labels from bright values. Send and spend read amber; destructive effects read red. The selected task outcome band and timeline stay in place.
 
 - Task details lead with the outcome and check count, show the agent’s summary and check reasons, and group repeated commands and app actions in an oldest-first timeline. Clipped commands keep their readable text. Waiting approvals and steps that were not run keep their reasons. Failed and unknown steps stay visible. Open groups and keyboard focus survive live refreshes and sliding receipt windows; new steps follow only while you are at the timeline’s bottom. Failed commands also say so in Screen’s Now list.

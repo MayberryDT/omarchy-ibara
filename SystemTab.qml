@@ -18,7 +18,7 @@ Item {
   readonly property var healthLines: StatusModel.healthLines(health)
   readonly property bool offline: tokens.stateOf(computer) === "offline"
   readonly property string actionReason: host ? host.powerReason(computer) : "Connecting."
-  readonly property string updateReason: host ? host.updateReason(computer) : "Connecting."
+  readonly property string updateReason: host ? host.updateReason(computer, "update_ibara") : "Connecting."
   readonly property var lastRepair: health.repair && health.repair.last && typeof health.repair.last === "object" ? health.repair.last : null
   // Omarchy's update there: running, or how the last one ended, when, and why a failed one failed.
   readonly property var omarchyUpdate: computer && computer.omarchy_update ? computer.omarchy_update : null
@@ -32,6 +32,10 @@ Item {
     return tokens.ink("Omarchy updated", tokens.textTint(tokens.readyColor)) + when + (u.restart_needed ? tokens.ink(" · restart to finish", tokens.textTint(tokens.pausedColor)) : "")
   }
 
+  readonly property var ibaraUpdate: computer && computer.ibara_update ? computer.ibara_update : null
+  readonly property var latest: service ? service.latestRelease : null
+  property bool updateNotesOpen: false
+  readonly property var releaseNotes: service && service.behind(computer) ? StatusModel.releaseNotes(latest, computer.version) : []
   function reload() {
     if (!service || !visible || !computerId) return
     service.loadHealth()
@@ -120,9 +124,47 @@ Item {
           refreshing: !!root.service && root.service.readPending("health")
           nowMs: root.service ? root.service.nowMs : Date.now()
         }
+        Copy {
+          width: parent.width
+          text: "ibara " + (root.computer && root.computer.version || "version pending")
+          font.pixelSize: Style.font.bodySmall
+        }
+        Copy {
+          visible: !!root.ibaraUpdate
+          width: parent.width
+          text: !root.ibaraUpdate ? "" : root.ibaraUpdate.state === "running" ? "Updating ibara…"
+            : root.ibaraUpdate.state === "failed" ? "Update failed: " + root.ibaraUpdate.message
+            : "ibara " + root.ibaraUpdate.version + " installed" + (root.ibaraUpdate.shell === "deferred_locked" ? ". Its bar restarts after unlock." : ".")
+          color: root.ibaraUpdate && root.ibaraUpdate.state === "failed" ? root.tokens.textTint(root.tokens.attentionColor) : root.tokens.foreground
+          font.pixelSize: Style.font.bodySmall
+        }
+        Copy {
+          visible: !!root.service && root.service.staleConsole && root.computerId === root.service.thisComputerId
+          width: parent.width
+          text: "The bar is still using ibara " + (root.service ? root.service.loadedPluginVersion : "") + ". Restart it to load the installed version."
+          font.pixelSize: Style.font.bodySmall
+          dimmed: true
+        }
+        ActionButton {
+          visible: !!root.service && root.service.staleConsole && root.computerId === root.service.thisComputerId
+          label: "Restart Bar"
+          blocked: !!root.computer && root.computer.locked
+          disabledReason: "Unlock this computer first."
+          onClicked: if (!blocked) root.service.restartBar()
+        }
+        Repeater {
+          model: root.updateNotesOpen ? root.releaseNotes : root.releaseNotes.slice(0, 3)
+          delegate: Copy { required property var modelData; width: parent.width; text: String(modelData); font.pixelSize: Style.font.bodySmall; dimmed: true }
+        }
+        ActionButton {
+          visible: root.releaseNotes.length > 3
+          label: root.updateNotesOpen ? "Hide Release Notes" : "More Release Notes"
+          onClicked: root.updateNotesOpen = !root.updateNotesOpen
+        }
         Flow {
           width: parent.width
           spacing: Style.space(8)
+          ActionButton { label: "Check for Updates"; onClicked: if (root.service) root.service.loadUpdateCheck(true) }
           ActionButton { label: "Refresh Health"; onClicked: root.service.loadHealth() }
           ActionButton {
             label: "Show ibara Log"
@@ -148,7 +190,7 @@ Item {
             onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "lock")
           }
           ActionButton {
-            label: "Update ibara"
+            label: root.service && root.service.behind(root.computer) ? "Update to " + root.latest.version : "Update ibara"
             tooltipText: "Installs ibara's latest signed release on " + root.computerLabel + ". Nobody needs to be there."
             blocked: root.updateReason !== ""
             disabledReason: root.updateReason
@@ -157,8 +199,8 @@ Item {
           ActionButton {
             label: "Update Omarchy"
             tooltipText: "Runs Omarchy's system update on " + root.computerLabel + " with no questions. Nobody needs to be there."
-            blocked: root.updateReason !== ""
-            disabledReason: root.updateReason
+            blocked: (root.host ? root.host.updateReason(root.computer, "update_omarchy") : "Connecting.") !== ""
+            disabledReason: root.host ? root.host.updateReason(root.computer, "update_omarchy") : "Connecting."
             onClicked: if (!blocked && root.host) root.host.confirmPower(root.computerId, "update_omarchy")
           }
         }

@@ -629,6 +629,7 @@ function spelledDuration(ms) {
 // word as the state tag).
 // Without nowMs the line has no age, so it stays stable between refreshes.
 function activityLine(session, nowMs) {
+  if (asObject(asObject(session).ibara_update).state === "running") return "Updating ibara…"
   session = asObject(session)
   var state = fleetState(session)
   var task = asObject(session.active_task)
@@ -762,6 +763,27 @@ function wakeView(value) {
 
 // Omarchy's own update there (operator-status `omarchy_update`): the last or current run, or null.
 // finished_at is epoch ms (0 while it runs); message says why a failed one failed.
+function versionCompare(a, b) {
+  var left = String(a || "").match(/[0-9]+|[a-zA-Z]+/g) || [], right = String(b || "").match(/[0-9]+|[a-zA-Z]+/g) || []
+  for (var i = 0; i < Math.max(left.length, right.length); i++) {
+    var x = left[i] || "0", y = right[i] || "0"
+    if (/^[0-9]+$/.test(x) && /^[0-9]+$/.test(y)) { if (Number(x) !== Number(y)) return Number(x) > Number(y) ? 1 : -1 }
+    else if (x !== y) return x > y ? 1 : -1
+  }
+  return 0
+}
+function ibaraUpdateView(value) {
+  if (!value || typeof value !== "object" || ["running", "done", "failed"].indexOf(value.state) === -1) return null
+  return { state: value.state, version: clip(value.version, 64), from: clip(value.from, 64), started_at: timeMs(value.started_at), finished_at: timeMs(value.finished_at), shell: clip(value.shell, 32), message: clip(value.message, 240) }
+}
+function releaseNotes(release, since) {
+  if (!release) return []
+  var history = Array.isArray(release.history) ? release.history.filter(function(r) { return r && r.version && versionCompare(r.version, since) > 0 }) : []
+  var rows = []
+  for (var i = 0; i < history.length; i++) rows = rows.concat(["ibara " + history[i].version], history[i].notes || [])
+  if (!history.some(function(r) { return r.version === release.version })) rows = rows.concat(["ibara " + release.version], release.notes || [])
+  return rows
+}
 function omarchyUpdateView(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   if (["running", "done", "failed"].indexOf(value.state) === -1) return null
@@ -1040,14 +1062,31 @@ function choiceLabel(setting, value) {
 
 // A desktop notification's text for an approval: its words, or, when the computer gave none
 // a person can read, where to look (a notification has no Details).
-function requestNoticeBody(item, label, session, what) {
+function requestWho(item, session) {
   var who = item && item.agent ? item.agent : "An agent"
-  // Older question records do not name their agent. Use the computer's current
-  // task only when it is the same task, rather than attributing an old question.
   var task = session && session.active_task
   if (who === "An agent" && task && item.task_ref && task.task_ref === item.task_ref && task.principal)
-    who = "An agent from " + task.principal
-  return "Agent: " + clip(who, 100) + "\nComputer: " + clip(label || (item && item.label) || "Unknown computer", 128) + "\n" + clip(what, 300)
+    who = task.principal
+  return clip(who, 100)
+}
+function requestHeading(item, label, session) {
+  return requestWho(item, session) + " on " + clip(label || (item && item.label) || "Unknown computer", 128)
+}
+function requestPopupText(item) {
+  if (!item) return "Waiting for your answer"
+  if (item.login) return "Use your logins for " + listWords(item.login.sites.map(function(s) { return s.site }))
+  if (item.kind === "approval") {
+    var facts = Array.isArray(item.facts) ? item.facts : []
+    for (var i = 0; i < facts.length; i++) if (facts[i].label === "What") return clip(facts[i].value, 160)
+    if (!item.described) return "Needs your approval · Open for details"
+  }
+  return clip(item.summary, 160)
+}
+function noticeEscape(value) {
+  return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+function requestNoticeBody(item, label, session, what) {
+  return noticeEscape(clip(what, 200)) + "\n" + noticeEscape(requestHeading(item, label, session))
 }
 function approvalNoticeBody(item, label, session) {
   var facts = item && Array.isArray(item.facts) ? item.facts : []
@@ -1207,13 +1246,13 @@ function needsYouView(items, computers, hidden) {
   var add = function(id, label, kind, message, fix) {
     if (!id || seen[id] || !message || put[id] === message) return
     seen[id] = true
-    out.push({ computer_id: id, label: label, kind: kind, message: message, fix: fixDescription(fix) ? String(fix) : "" })
+    out.push({ computer_id: id, label: label, kind: kind, unsupported: kind === "unsupported", message: message, fix: fixDescription(fix) ? String(fix) : "" })
   }
   var list = Array.isArray(items) ? items : []
   for (var i = 0; i < list.length; i++) {
     var item = asObject(list[i])
     if (item.kind === "approval" || item.kind === "question" || item.kind === "login") continue
-    add(String(item.computer_id || ""), clip(item.label, 128), String(item.kind || ""), clip(item.summary, 240) || "This computer needs you.", item.kind === "repair" ? item.ref : "")
+    add(String(item.computer_id || ""), clip(item.label, 128), item.ref && item.kind !== "repair" ? "unsupported" : String(item.kind || ""), item.ref && item.kind !== "repair" ? "This needs a newer ibara." : clip(item.summary, 240) || "This computer needs you.", item.kind === "repair" ? item.ref : "")
   }
   var rows = Array.isArray(computers) ? computers : []
   for (var j = 0; j < rows.length; j++) {

@@ -45,7 +45,7 @@ Item {
   readonly property var favorites: host ? host.favorites : ({})
   // Why Fleet Actions' Update ibara on All and Update Omarchy on All can't run now, or "". A
   // string, so the menu's items change only when the answer does, not with every picture.
-  readonly property string updateAllBlocked: host ? host.updateAllPlan().blocked : "Connecting."
+  readonly property string updateAllBlocked: host ? host.updateAllPlan("update_ibara").blocked : "Connecting."
   // The one being sent now (update_ibara or update_omarchy), or "".
   readonly property string updateAllAction: service && service.updateAllRun ? String(service.updateAllRun.action || "") : ""
   readonly property var counts: {
@@ -58,6 +58,7 @@ Item {
     }
     return result
   }
+  readonly property int olderCount: service && service.latestRelease ? computers.filter(function(c) { return root.service.behind(c) }).length : 0
   readonly property int attentionCount: Number(counts.attention || 0) + Number(counts.offline || 0) + Number(counts.locked || 0)
   readonly property int useCount: Number(counts.human || 0) + Number(counts.working || 0) + Number(counts.paused || 0)
   readonly property var visibleComputers: {
@@ -343,10 +344,10 @@ Item {
         items: [
           { id: "theme", label: root.service && root.service.busy["theme-fleet"] ? "Applying Theme…" : "Apply Theme to Fleet",
             blocked: !!root.service && !!root.service.busy["theme-fleet"], reason: "ibara is applying it now." },
-          { id: "update_ibara", label: root.updateAllAction === "update_ibara" ? "Updating ibara…" : "Update ibara on All…",
+          { id: "update_ibara", label: root.updateAllAction === "update_ibara" ? "Updating ibara…" : (root.service && root.service.latestRelease && root.service.latestRelease.version ? "Update ibara on All to " + root.service.latestRelease.version + " (" + root.olderCount + " behind)…" : "Update ibara on All…"),
             blocked: root.updateAllBlocked !== "", reason: root.updateAllBlocked },
           { id: "update_omarchy", label: root.updateAllAction === "update_omarchy" ? "Updating Omarchy…" : "Update Omarchy on All…",
-            blocked: root.updateAllBlocked !== "", reason: root.updateAllBlocked }
+            blocked: (root.host ? root.host.updateAllPlan("update_omarchy").blocked : "Connecting.") !== "", reason: (root.host ? root.host.updateAllPlan("update_omarchy").blocked : "Connecting.") }
         ].concat(root.service && root.service.loginSettings ? [
           // Sync Logins…: every site Allowed on any computer becomes Allowed for All Computers, after a confirmation.
           { id: "sync_logins", label: root.service.busy["login-sync"] ? "Syncing Logins…" : "Sync Logins…",
@@ -523,6 +524,7 @@ Item {
         readonly property bool showActions: focused || hover.hovered || confirming || menuOpen
         readonly property string blockedReason: root.host ? root.host.controlBlockedReason(computer) : "Unavailable"
         readonly property bool holding: !!root.host && root.host.holds(computerId)
+        readonly property bool connecting: !!root.service && root.service.connectingOn(computerId)
         readonly property bool viewerOpen: holding && root.host.viewerOpen(computerId)
         // T, V or H (Console.handleKey) on the card with the keyboard: its Take Control, Open or
         // Close Viewer, or Hand Back, as if chosen there.
@@ -640,7 +642,7 @@ Item {
                 StateMarker { tokens: root.tokens; fleetState: cell.shownState; anchors.verticalCenter: parent.verticalCenter }
                 Copy {
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.tokens.stateLabel(cell.shownState, cell.computer)
+                  text: cell.connecting ? "Connecting…" : root.tokens.stateLabel(cell.shownState, cell.computer) + (cell.computer.version ? " · ibara " + cell.computer.version : "")
                   color: root.tokens.textTint(root.tokens.stateColor(cell.shownState))
                   font.pixelSize: Style.font.bodySmall
                 }
@@ -673,7 +675,7 @@ Item {
             // its focus, so Tab from the grid reaches the buttons and Shift+Tab returns.
             Loader {
               id: actionsLoader
-              active: cell.showActions || cell.standing !== "" || cell.holding
+              active: cell.showActions || cell.standing !== "" || cell.holding || !!(root.service && root.service.connectingOn(cell.computerId))
               anchors.left: parent.left
               anchors.bottom: dropBar.visible ? dropBar.top : parent.bottom
               anchors.margins: Style.space(8)
@@ -716,29 +718,25 @@ Item {
                       else root.service.wake(cell.computerId)
                     }
                   }
-                  ActionButton {
+                  TakeControlButton {
                     id: takeControl
-                    visible: !cell.holding && cell.showActions && StatusModel.computerState(cell.computer) !== "offline"
-                    label: "Take Control" + (cell.focused ? " (T)" : "")
+                    service: root.service
+                    host: root.host
+                    computerId: cell.computerId
+                    visible: (!cell.holding && cell.showActions || connecting) && StatusModel.computerState(cell.computer) !== "offline"
+                    keyHint: cell.focused ? " (T)" : ""
                     role: cell.standing !== "" ? "secondary" : "primary"
                     size: "small"
                     focus: !cell.holding
-                    blocked: cell.blockedReason !== ""
-                    disabledReason: cell.blockedReason
                     // Why it is unavailable is a toast when chosen, never a tooltip over the cards.
                     tooltipText: ""
                     Accessible.name: "Take Control " + root.tokens.label(cell.computer)
-                    onClicked: {
-                      if (!root.host) return
-                      if (blocked) root.host.notify(cell.blockedReason, false)
-                      else root.host.takeControl(cell.computerId)
-                    }
                   }
                   // While you hold control: Open Viewer (Close Viewer while it is open), then Hand
                   // Back in Take Control's place.
                   ActionButton {
                     id: viewerButton
-                    visible: cell.holding && (cell.viewerOpen || StatusModel.computerState(cell.computer) !== "offline")
+                    visible: cell.holding && !cell.connecting && (cell.viewerOpen || StatusModel.computerState(cell.computer) !== "offline")
                     readonly property string word: cell.viewerOpen ? "Close Viewer" : "Open Viewer"
                     label: word + (cell.focused ? " (V)" : "")
                     size: "small"

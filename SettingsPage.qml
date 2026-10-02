@@ -115,7 +115,7 @@ Item {
     height: parent.height - y
     width: parent.width
     centered: true
-    sections: root.service ? root.service.consoleSettings.concat(root.service.unattendedBootSections, root.loginSections) : []
+    sections: root.service ? root.service.requestSettingsSections.concat(root.service.consoleSettings.map(function(section) { return Object.assign({}, section, { settings: section.settings.filter(function(s) { return s.key !== "approval_notifications" }) }) }), root.service.unattendedBootSections, root.loginSections) : []
     busy: root.service ? Object.assign({}, root.service.settingsBusyFor(""), root.service.busy["login-on"] ? { login_sharing: root.service.busy["login-on"] } : {}) : ({})
     errors: root.service ? root.service.settingsErrorsFor("") : ({})
     // Live Video: each computer that can't stream says why, and so does a desktop that can't play it.

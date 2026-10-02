@@ -10,7 +10,7 @@ Toast {
   property bool notesOpen: false
   readonly property var news: service ? service.whatsNew : null
   readonly property var notes: news && Array.isArray(news.notes) ? news.notes : []
-  readonly property string heading: news ? "ibara updated itself to " + String(news.version || "a new version") + "." : ""
+  readonly property string heading: news ? "ibara updated to " + String(news.version || "a new version") + "." : ""
 
   function closeDetails() { if (!notesOpen) return false; notesOpen = false; return true }
 

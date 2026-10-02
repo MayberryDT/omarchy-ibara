@@ -115,6 +115,7 @@ Panel {
     else if (kind === "away") awayHidden = true
     else if (kind === "connect") connectHintDone = true
     else if (kind === "login-rejected") service.dismissLoginRejected(ref)
+    else if (kind === "viewer-closed") service.keepControl(ref)
   }
   // The standing toasts follow their conditions: new ones join at the bottom, gone ones leave,
   // and one that stays keeps its place (and the keyboard, if it has it).
@@ -131,6 +132,9 @@ Panel {
       connectPrompt: service.connectPrompt, firstTaskDone: service.firstTaskDone, connectHintDone: connectHintDone,
       serviceStopped: service.serviceStopped === true
     })
+    for (var id in service.viewerClosed) {
+      if (service.holdsControlOn(id)) wanted.push({ key: "viewer-closed:" + id, kind: "viewer-closed", ref: id, tone: "note" })
+    }
     var want = ({})
     for (var w = 0; w < wanted.length; w++) want[wanted[w].key] = wanted[w]
     for (var i = toastModel.count - 1; i >= 0; i--) {
@@ -144,7 +148,14 @@ Panel {
       toastModel.append({ key: wanted[j].key, kind: wanted[j].kind, ref: wanted[j].ref, text: "", tone: wanted[j].tone, serial: toastSerial, action: "" })
     }
   }
-  function syncStandingLater() { Qt.callLater(syncStanding) }
+  // The host unloads this panel on close. Keep deferred work on its lifetime.
+  Timer {
+    id: standingSync
+    interval: 0
+    repeat: false
+    onTriggered: root.syncStanding()
+  }
+  function syncStandingLater() { standingSync.restart() }
   onRouteChanged: syncStandingLater()
   onComputerIdChanged: syncStandingLater()
   onAwayHiddenChanged: syncStandingLater()
@@ -159,6 +170,14 @@ Panel {
   }
   // The bar opened one approval: the keyboard lands on its Approve.
   function focusApproval(ref) { return !!toastStack && toastStack.focusKey("approval:" + ref, true) }
+  function focusRequest(ref) {
+    if (!service || !toastStack) return false
+    var item = service.requestItems.filter(function(item) { return item.ref === ref })[0]
+    if (!item) return false
+    var key = item.kind + ":" + ref, approve = item.kind !== "question"
+    if (!toastStack.focusKey(key, approve)) Qt.callLater(function() { if (root.toastStack) root.toastStack.focusKey(key, approve) })
+    return true
+  }
 
   // ---- Connect an Agent: the prompt in a card attached to the control that opened it, the
   // fleet's toolbar button unless another is given. Opening it again from there closes it.
@@ -270,7 +289,7 @@ Panel {
     // The route is chosen before the window exists, so only that route's page is built.
     if (payload.route === "computer" && typeof payload.computerId === "string" && payload.computerId) {
       // The bar opens one approval directly: the keyboard lands on its Approve.
-      pendingFocus = payload.focus === "approval" && typeof payload.ref === "string" ? { kind: "approval", ref: payload.ref } : null
+      pendingFocus = (payload.focus === "approval" || payload.focus === "request") && typeof payload.ref === "string" ? { kind: payload.focus, ref: payload.ref } : null
       showComputer(payload.computerId, payload.tab)
     }
     else if (payload.route === "add" || payload.view === "setup") showAdd()
@@ -282,6 +301,7 @@ Panel {
     else showFleet()
     syncToasts()
     root.controller.show()
+    Qt.callLater(function() { if (windowLoader.item) windowLoader.item.activateConsole() })
   }
   function close() {
     root.controller.hide()
@@ -417,6 +437,8 @@ Panel {
     function onLoginRejectedChanged() { root.syncStandingLater() }
     function onLoginSetupWantedChanged() { root.syncStandingLater() }
     function onQuestionsChanged() { root.syncStandingLater() }
+    function onViewerClosedChanged() { root.syncStandingLater() }
+    function onSessionsChanged() { root.syncStandingLater() }
     // Logins: a message that stays (the browser to open, a write not confirmed, an older ibara),
     // another computer sharing when Turn On runs, and Sync Logins' plan to confirm.
     function onLoginNote(key, text, error) { root.showToast(key, text, error) }
@@ -510,33 +532,10 @@ Panel {
   // ---- shared computer actions
   function holds(id) { return !!service && typeof service.holdsControlOn === "function" && service.holdsControlOn(id) }
   function controlBlockedReason(c) {
-    if (!c || !service) return "This computer is not available."
-    if (service.denied) return "You don't have access."
-    if (holds(c.computer_id)) return service.mutating ? "Wait for the current action to finish." : ""
-    if (c.trust_state !== "verified") return "This computer isn't paired from here. Pair it again from Add Computer."
-    if (c.interactive_control !== "available_if_exclusive") return "Take Control isn't available on this computer: it doesn't let this computer take control, or its screen sharing is being repaired or isn't installed."
-    if (StatusModel.computerState(c) === "offline") return "This computer is not answering."
-    if (service.mutating) return "Wait for the current action to finish."
-    return ""
+    return c && service ? service.controlBlockedReason(c.computer_id) : "This computer is not available."
   }
   function takeControl(id) {
-    var c = computerById(id)
-    if (!c || controlBlockedReason(c)) return
-    if (holds(id)) { service.openViewerFor(id); return }
-    var owner = String(c.owner_name || ""), revision = String(c.ownership_revision || "")
-    var who = tokens.actor(c)
-    var name = tokens.label(c)
-    askConfirm({
-      message: "Take control of " + name + "?" + (who && who !== "you" ? " " + who.charAt(0).toUpperCase() + who.slice(1) + " is using it now." : "") +
-        " Taking control pauses its agent. Closing the viewer does not hand it back.",
-      confirmLabel: "Take Control",
-      subject: id,
-      run: function() { service.takeControlFor(id) },
-      valid: function() {
-        var now = root.computerById(id)
-        return !!now && String(now.owner_name || "") === owner && String(now.ownership_revision || "") === revision
-      }
-    })
+    if (service) service.requestTakeControl(id, function(options) { root.askConfirm(options) })
   }
   function handBack(id) {
     if (!holds(id) || !service || service.mutating) return
@@ -577,7 +576,10 @@ Panel {
       danger: ["restart", "shutdown", "sleep"].indexOf(action) !== -1,
       subject: id,
       run: function() { root.service.power(id, action) },
-      valid: function() { return !!root.computerById(id) }
+      valid: function() {
+        var now = root.computerById(id)
+        return !!now && !(action.indexOf("update_") === 0 ? root.updateReason(now, action) : root.powerReason(now))
+      }
     })
   }
   // Why Restart, Shut Down, Sleep and Lock Screen can't run on a computer now, or "" when they can.
@@ -590,10 +592,20 @@ Panel {
   }
   // The same for Update ibara and Update Omarchy, which also wait while Omarchy updates there.
   // The System tab's buttons and Update … on All both ask here.
-  function updateReason(c) {
+  function updateReason(c, action) {
     var why = powerReason(c)
     if (why) return why
-    return c && c.omarchy_update && c.omarchy_update.state === "running" ? tokens.label(c) + " is updating Omarchy now." : ""
+    if (c && c.omarchy_update && c.omarchy_update.state === "running") return tokens.label(c) + " is updating Omarchy now."
+    if (c && c.ibara_update && c.ibara_update.state === "running") return "Updating ibara…"
+    var owner = String(c && c.owner_name || "")
+    if (owner.indexOf("operator:") === 0) return "A person holds control of " + tokens.label(c) + ". Hand Back before updating."
+    if (c && c.paused === true && c.pause_origin === "person") return "A person paused agents on " + tokens.label(c) + ". Resume Agents before updating."
+    if (c && (c.active_task_ref || owner.indexOf("agent:") === 0)) return "An agent is working on " + tokens.label(c) + "."
+    if (action !== "update_omarchy" && service.latestRelease && service.latestRelease.version) {
+      // Older computers may not report a version. Their plain update still works.
+      if (c.version && !service.behind(c)) return "ibara is already current (" + c.version + ")."
+    }
+    return ""
   }
   function shortList(names, most) {
     var shown = names.length > most ? names.slice(0, most - 1).concat([(names.length - most + 1) + " more"]) : names
@@ -602,12 +614,12 @@ Panel {
   // Update ibara on All and Update Omarchy on All (Fleet Actions): the update on each computer
   // whose own is allowed now, this computer last; the rest are said with why. blocked: why none
   // can update, or "".
-  function updateAllPlan() {
+  function updateAllPlan(action) {
     var ready = [], skipped = [], self = null, selfId = service ? String(service.thisComputerId || "") : ""
     for (var i = 0; i < computers.length; i++) {
       var c = computers[i]
       if (!c || !c.computer_id) continue
-      var why = updateReason(c)
+      var why = updateReason(c, action)
       if (why) skipped.push(why.replace(/\.$/, ""))
       else if (String(c.computer_id) === selfId) self = c
       else ready.push(c)
@@ -618,10 +630,10 @@ Panel {
     return { ready: ready, skipped: skipped, selfId: self ? selfId : "", blocked: blocked }
   }
   function confirmUpdateAll(action, anchor) {
-    var plan = updateAllPlan(), label = updateLabels[action]
+    var plan = updateAllPlan(action), label = updateLabels[action]
     if (plan.blocked || !label) return
     var ids = plan.ready.map(function(c) { return String(c.computer_id) })
-    var names = plan.ready.map(function(c) { return String(c.computer_id) === plan.selfId ? "this computer" : tokens.label(c) })
+    var names = plan.ready.map(function(c) { return (String(c.computer_id) === plan.selfId ? "this computer" : tokens.label(c)) + (c.version ? " (ibara " + c.version + ")" : "") })
     var count = ids.length
     askConfirm({
       anchor: anchor,
@@ -633,7 +645,7 @@ Panel {
         root.service.updateAll(action, ids.filter(function(id) { return id !== plan.selfId }), plan.selfId)
       },
       valid: function() {
-        var now = root.updateAllPlan()
+        var now = root.updateAllPlan(action)
         return !now.blocked && now.ready.map(function(c) { return String(c.computer_id) }).join("\n") === ids.join("\n")
       },
       staleMessage: "Nothing was updated: which computers can update changed while you were confirming. Choose " + label + " on All again to see them."
@@ -794,6 +806,7 @@ Panel {
     readonly property Item activeRoute: root.route === "computer" ? computerRoute.item : root.route === "add" ? addRoute.item : root.route === "settings" ? settingsRoute.item : root.route === "share" ? shareRoute.item : fleetRoute.item
     readonly property var focusedItem: keyboardSurface.Window.activeFocusItem
     readonly property Item toastStack: toasts
+    function activateConsole() { if (keyboardSurface.Window.window) keyboardSurface.Window.window.requestActivate() }
     title: "ibara · console"
     visible: root.opened
     color: Color.popups.background
@@ -801,6 +814,10 @@ Panel {
     implicitHeight: Style.space(920)
     minimumSize: Qt.size(Style.space(900), Style.space(560))
     onVisibleChanged: if (!visible && root.opened) root.requestClose()
+    readonly property bool consoleWindowActive: keyboardSurface.Window.active
+    onConsoleWindowActiveChanged: if (root.service) root.service.consoleFocused = consoleWindowActive
+    Component.onCompleted: if (root.service) root.service.consoleFocused = consoleWindowActive
+    Component.onDestruction: if (root.service) root.service.consoleFocused = false
 
     FocusScope {
       id: keyboardSurface

@@ -49,7 +49,9 @@ From the console you can also:
 
 Every shape is square, every color comes from your Omarchy theme, and switching themes recolors everything at once.
 
-Approval, login and question notifications show the agent, computer and request on separate lines. They close when answered elsewhere. Desktop buttons use the same operator checks as the console. A notification daemon must display actions; Tyler's inbox does, with toasts off and waiting requests lighting the chip during automatic DND.
+Approval, login and question requests appear in ibara's own top-right pop-ups while the console isn't focused. The cards use the console's buttons and your theme. Up to three show at once; +N More opens the rest in the console. Click a card's text to open that request. ✕ means Later: the request stays in the console with live buttons. Answered or expired requests leave the stack.
+
+Console Settings has Request Pop-ups, switches for each kind, Show During Do Not Disturb (off by default), and Also Send Desktop Notifications (off by default). Settings survive shell restarts through Omarchy's plugin settings. When pop-ups are off, desktop notifications offer Open and the same answers where the notification server renders buttons. Desktop notifications close through the standard notification protocol; stock Omarchy may keep its own closed card visible until its 15-second timeout.
 
 ## Install
 
@@ -100,7 +102,7 @@ This keeps this computer's keys, pairings and history for a later install. `ibar
 
 ## Privacy and security
 
-Pictures, files and commands go directly between your computers over Tailscale. Nothing goes through a server of ours. Opening the console never takes control of a computer, and closing it never hands control back to agents. In the console, Take Control, Restart, Shut Down, Sleep, Lock Screen, Update, ending a task, and removing or revoking access ask you first and name the computer; access and setting changes apply at once and offer Undo. By default, an agent's send, spend or delete waits for your approval; you can turn that off for agents from your own computers, and agents from anyone else's computer keep asking.
+Pictures, files and commands go directly between your computers over Tailscale. Nothing goes through a server of ours. Opening the console never takes control of a computer, and closing it never hands control back to agents. In the console, Take Control starts at once and only asks first when another person holds that computer. Question and login cards offer Take Control too. A question with one affirmative answer offers Done & Hand Back while you have control; questions with several options wait for your choice. While you hold control, a floating Hand Back pill stays above the viewer on its screen, even in fullscreen. Click it or press Ctrl+Alt+Shift+H inside the viewer to hand back and close the viewer. Super+Alt+Escape still switches where keys go. Closing the viewer by itself keeps control. A question with no options or one affirmative answer offers Done & Hand Back on the pill; other questions offer Hand Back and Open. Restart, Shut Down, Sleep, Lock Screen, Update, ending a task, and removing or revoking access ask you first and name the computer; access and setting changes apply at once and offer Undo. By default, an agent's send, spend or delete waits for your approval; you can turn that off for agents from your own computers, and agents from anyone else's computer keep asking.
 
 ibara's [security and access guide](https://github.com/MayberryDT/ibara/blob/main/docs/security-and-access.md) explains pairing, permissions and approvals. To report a vulnerability, follow ibara's [security policy](https://github.com/MayberryDT/ibara/blob/main/SECURITY.md).
 

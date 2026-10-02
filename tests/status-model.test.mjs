@@ -75,7 +75,6 @@ test('Details say what, who, where, the page and the window in words; Copy Reque
     where: { app: 'Chromium', page: 'localhost:8080/signup', window_title: 'Sign up' } };
   const [item] = M.attentionView(approvalItem({ summary, details }));
   assert.equal(item.summary, summary);
-  assert.equal(M.approvalNoticeBody(item), 'Agent: codex@vesper\nComputer: Vesper\nPress Return, which sends something on localhost:8080/signup');
   assert.deepEqual(factLines(item), ['Who: codex@vesper', 'What: Press Return, which sends something', 'Where: Chromium on Vesper',
     'Page: localhost:8080/signup', 'Window title: Sign up', 'Task: Sign up']);
   assert.deepEqual(JSON.parse(item.request), details);

@@ -205,6 +205,7 @@ FocusScope {
             : kind === "login-setup" ? loginSetupToast
             : kind === "login-rejected" ? loginRejectedToast
             : kind === "question" ? questionToast
+            : kind === "viewer-closed" ? viewerClosedToast
             : kind === "pair" ? pairToast
             : kind === "need" ? needToast
             : kind === "problem" ? problemToast
@@ -271,15 +272,13 @@ FocusScope {
       onDismissed: if (root.host) root.host.dismissToast(key)
       Copy { width: parent.width; text: rejected.entry ? rejected.entry.site + " didn't accept your login on " + rejected.name : ""; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor) }
       Copy { id: rejectedText; width: parent.width; text: "It still shows its sign-in page, so the agent there can't go on. Take Control to sign in yourself."; font.pixelSize: Style.font.bodySmall }
-      ActionButton {
+      TakeControlButton {
         id: takeButton
-        label: "Take Control"
-        role: "primary"
+        service: root.service
+        host: root.host
+        computerId: rejected.entry ? String(rejected.entry.computer) : ""
         size: "small"
-        blocked: !!rejected.entry && !!root.host && root.host.controlBlockedReason(root.host.computerById(rejected.entry.computer)) !== ""
-        disabledReason: rejected.entry && root.host ? root.host.controlBlockedReason(root.host.computerById(rejected.entry.computer)) : ""
         Accessible.name: "Take control of " + rejected.name + " to sign in to " + (rejected.entry ? rejected.entry.site : "")
-        onClicked: if (!blocked && root.host && rejected.entry) root.host.takeControl(rejected.entry.computer)
       }
     }
   }
@@ -369,12 +368,41 @@ FocusScope {
   Component {
     id: questionToast
     QuestionCard {
-      readonly property string ref: parent ? parent.ref : ""
+      readonly property string refKey: parent ? parent.ref : ""
       service: root.service
+      host: root.host
       item: {
         var list = root.service && Array.isArray(root.service.questions) ? root.service.questions : []
-        for (var i = 0; i < list.length; i++) if (list[i].ref === ref) return list[i]
+        for (var i = 0; i < list.length; i++) if (list[i].ref === refKey) return list[i]
         return null
+      }
+    }
+  }
+  Component {
+    id: viewerClosedToast
+    Toast {
+      id: closedViewer
+      readonly property string computerId: parent ? parent.ref : ""
+      edge: Color.accent
+      firstControl: handBack
+      dismissable: false
+      Copy { width: parent.width; text: root.service ? root.service.computerLabelFor(closedViewer.computerId) + ": you still have control" : "" }
+      Flow {
+        width: parent.width
+        spacing: Style.space(8)
+        ActionButton {
+          id: handBack
+          label: "Hand Back"
+          role: "primary"
+          size: "small"
+          blocked: !root.service || root.service.mutating
+          onClicked: if (!blocked) root.service.handBackFor(closedViewer.computerId)
+        }
+        ActionButton {
+          label: "Keep Control"
+          size: "small"
+          onClicked: if (root.service) root.service.keepControl(closedViewer.computerId)
+        }
       }
     }
   }
@@ -392,16 +420,16 @@ FocusScope {
       }
       readonly property string name: entry ? (entry.label || (root.service ? root.service.computerLabelFor(computerId) : "")) : ""
       readonly property bool fixing: !!root.service && !!root.service.busy["repair:" + computerId]
-      readonly property string words: entry ? entry.message + (entry.fix ? "" : " Restart it, or check it there.") : ""
+      readonly property string words: entry ? entry.message + (entry.fix || entry.unsupported ? "" : " Restart it, or check it there.") : ""
       readonly property bool here: !!root.host && root.host.route === "computer" && root.host.computerId === computerId
       edge: Color.urgent
       tinted: true
-      firstControl: fixButton.visible ? fixButton : openNeed.visible ? openNeed : null
+      firstControl: updateHere.visible ? updateHere : fixButton.visible ? fixButton : openNeed.visible ? openNeed : null
       dismissName: "Put away the note that " + name + " needs you"
       Accessible.name: name + " needs you. " + words
       onDismissed: if (root.host) root.host.dismissToast(key)
-      Copy { width: parent.width; text: need.name + " needs you"; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor); wrapMode: Text.NoWrap; elide: Text.ElideRight }
-      Copy { width: parent.width; text: need.words; font.pixelSize: Style.font.bodySmall }
+      Copy { width: parent.width; text: need.entry && need.entry.unsupported ? "This needs a newer ibara" : need.name + " needs you"; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor); wrapMode: Text.NoWrap; elide: Text.ElideRight }
+      Copy { width: parent.width; text: need.entry && need.entry.unsupported ? "Update this computer to answer " + need.name + "'s request." : need.words; font.pixelSize: Style.font.bodySmall }
       Row {
         spacing: Style.space(8)
         ActionButton {
@@ -414,6 +442,15 @@ FocusScope {
           tooltipText: need.entry ? StatusModel.fixDescription(need.entry.fix) : ""
           Accessible.name: "Fix It on " + need.name + ": " + (need.entry ? StatusModel.fixDescription(need.entry.fix) : "")
           onClicked: if (!blocked && root.service) root.service.repair(need.computerId, need.entry.fix)
+        }
+        ActionButton {
+          id: updateHere
+          visible: !!need.entry && need.entry.unsupported
+          label: "Update ibara Here"
+          size: "small"
+          blocked: !root.service || !root.service.thisComputerId
+          disabledReason: "Pair this computer first."
+          onClicked: if (!blocked && root.host) root.host.confirmPower(root.service.thisComputerId, "update_ibara")
         }
         ActionButton {
           id: openNeed

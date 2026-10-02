@@ -20,6 +20,9 @@ FocusScope {
   property bool focusHolds: true
   property string dismissName: "Dismiss this message"
   property Item firstControl: null
+  // Request cards also render in the service's desktop stack, with the same actions.
+  property bool popup: false
+  signal bodyClicked()
   default property alias toastBody: body.data
   signal dismissed()
 
@@ -44,6 +47,12 @@ FocusScope {
   }
   Rectangle { anchors.fill: parent; anchors.margins: 1; radius: 0; color: Qt.alpha(root.tinted ? root.edge : Color.popups.text, root.tinted ? 0.10 : 0.04) }
   Rectangle { x: 1; y: 1; width: Style.space(3); height: parent.height - 2; radius: 0; color: root.edge }
+  MouseArea {
+    anchors.fill: parent
+    enabled: root.popup
+    cursorShape: Qt.PointingHandCursor
+    onClicked: root.bodyClicked()
+  }
   Column {
     id: body
     x: Style.space(16)
@@ -62,7 +71,7 @@ FocusScope {
     role: "quiet"
     size: "small"
     Accessible.name: root.dismissName
-    tooltipText: "Dismiss (Escape)"
+    tooltipText: root.popup ? "Later · Keep the request in the console" : "Dismiss (Escape)"
     onClicked: root.dismissed()
   }
   HoverHandler { id: hover }

@@ -67,9 +67,10 @@ Item {
   function focusSearch() { search.focusInput() }
   function focusDefault() {
     // The bar opened one approval: the keyboard lands on its Approve, in its toast.
-    var wanted = host && host.pendingFocus && host.pendingFocus.kind === "approval" ? host.pendingFocus.ref : ""
+    var pending = host ? host.pendingFocus : null
+    var wanted = pending ? pending.ref : ""
     if (host) host.pendingFocus = null
-    if (wanted && host.focusApproval(wanted)) return
+    if (wanted && (pending.kind === "request" ? host.focusRequest(wanted) : host.focusApproval(wanted))) return
     var index = indexOfComputer(computerId)
     if (index >= 0) list.currentIndex = index
     list.forceActiveFocus()
@@ -279,6 +280,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.StyledText
         text: {
+          if (root.service && root.service.connectingOn(root.computerId)) return "Connecting…"
           var who = root.tokens.actor(root.computer)
           var what = root.tokens.activity(root.computer, root.service ? root.service.nowMs : 0)
           var words = root.tokens.activityMarkup(root.computer, root.service ? root.service.nowMs : 0)
@@ -321,25 +323,18 @@ Item {
           label: "Send File"
           onClicked: if (root.host) root.host.setTab("files")
         }
-        ActionButton {
+        TakeControlButton {
           id: takeControlButton
-          visible: !root.holding
-          label: "Take Control (T)"
-          role: "primary"
-          blocked: root.controlReason !== ""
-          disabledReason: root.controlReason
-          // Why it is unavailable is a toast when chosen, never a long tooltip over the page.
-          tooltipText: ""
+          service: root.service
+          host: root.host
+          computerId: root.computerId
+          visible: !root.holding || connecting
+          keyHint: " (T)"
           Accessible.name: "Take Control"
-          onClicked: {
-            if (!root.host) return
-            if (blocked) root.host.notify(root.controlReason, false)
-            else root.host.takeControl(root.computerId)
-          }
         }
         ActionButton {
           id: viewerButton
-          visible: root.holding
+          visible: root.holding && !(root.service && root.service.connectingOn(root.computerId))
           label: (root.viewerOpen ? "Close Viewer" : "Open Viewer") + " (V)"
           blocked: !root.viewerOpen && root.controlReason !== ""
           disabledReason: blocked ? root.controlReason : ""

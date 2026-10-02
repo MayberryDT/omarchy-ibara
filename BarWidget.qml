@@ -44,6 +44,7 @@ BarWidget {
     if (!ibaraService) return "Connecting"
     if (stopped) return "ibara isn't running on this computer"
     var needs = []
+    if (ibaraService.updateAvailable) needs.push("ibara " + ibaraService.updateAvailable + " available")
     if (approvals.length) needs.push(approvals.length === 1 ? "1 approval waiting" : approvals.length + " approvals waiting")
     if (logins.length) needs.push(logins.length === 1 ? "1 login request waiting" : logins.length + " login requests waiting")
     if (questions.length) needs.push(questions.length === 1 ? "1 question waiting" : questions.length + " questions waiting")
@@ -127,8 +128,8 @@ BarWidget {
     bar: root.bar
     text: "ibara"
     labelVisible: false
-    fixedWidth: root.vertical ? -1 : mark.width + scaledHorizontalMargin * 2
-    fixedHeight: root.vertical ? mark.height + Style.space(6) : -1
+    fixedWidth: root.vertical ? -1 : Style.bar.iconSlot
+    fixedHeight: root.vertical ? Style.bar.iconSlot : -1
     // One accent flash behind the mark when something new needs you.
     Rectangle {
       id: flash
@@ -144,20 +145,22 @@ BarWidget {
     IbaraMark {
       id: mark
       anchors.centerIn: parent
-      width: Style.space(26)
+      width: Style.bar.iconCanvas + Style.space(2)
       height: width
-      color: Color.accent
+      color: button.foreground
     }
     Rectangle {
       visible: root.worst !== "" && root.needsCount === 0
-      width: Style.space(7)
+      width: Style.space(5)
       height: width
       radius: 0
       anchors.right: mark.right
       anchors.bottom: mark.bottom
-      color: root.tokens.stateColor(root.worst)
-      border.width: 1
-      border.color: Color.bar.background
+      anchors.rightMargin: -Style.space(1)
+      anchors.bottomMargin: -Style.space(1)
+      color: root.worst === "attention" ? button.activeColor : root.tokens.stateColor(root.worst)
+      border.width: root.bar && root.bar.transparent ? 0 : 1
+      border.color: root.bar ? root.bar.background : Color.bar.background
       Accessible.ignored: true
       SequentialAnimation on opacity {
         running: root.worst === "working"
@@ -171,15 +174,15 @@ BarWidget {
     Rectangle {
       visible: root.needsCount > 0
       width: Math.max(height, countText.implicitWidth + Style.space(6))
-      height: Style.space(14)
+      height: Style.space(12)
       radius: 0
       anchors.right: mark.right
       anchors.rightMargin: -Style.space(4)
       anchors.bottom: mark.bottom
       anchors.bottomMargin: -Style.space(2)
-      color: Color.urgent
-      border.width: 1
-      border.color: Color.bar.background
+      color: button.activeColor
+      border.width: root.bar && root.bar.transparent ? 0 : 1
+      border.color: root.bar ? root.bar.background : Color.bar.background
       Accessible.ignored: true
       scale: 1
       NumberAnimation on scale { id: popAnim; running: false; from: 1.3; to: 1; duration: 200; easing.type: Easing.OutCubic }
@@ -188,7 +191,7 @@ BarWidget {
         anchors.centerIn: parent
         text: root.needsCount > 9 ? "9+" : String(root.needsCount)
         textFormat: Text.PlainText
-        color: Color.bar.background
+        color: root.bar ? root.bar.background : Color.bar.background
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
         font.bold: true
@@ -198,9 +201,7 @@ BarWidget {
     Accessible.name: "ibara · " + root.summary + (root.needsCount > 0 || root.problems.length > 0 ? ". Press to open what needs you; right-click for the console." : ". Press for the fleet summary; right-click for the console.")
     Accessible.onPressAction: if (root.needsCount > 0 || root.problems.length > 0) root.openNeeds(); else root.toggle()
     tooltipText: "ibara · " + root.summary
-    active: root.worst === "human" || root.worst === "working"
     dimmed: !root.ibaraService || root.stopped
-    useActiveColor: root.worst === "attention"
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.MiddleButton && root.ibaraService) root.ibaraService.refresh()
       else if (buttonCode === Qt.RightButton) root.summon({})

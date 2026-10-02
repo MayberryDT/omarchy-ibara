@@ -49,16 +49,16 @@ Toast {
   function answer(value) {
     if (!service || !item || answering || unreachable) return
     chosen = value
-    service.answerApproval(item.ref, value)
+    service.answerApproval(item.ref, value, popup, name)
   }
   function toggleDetails() { if (item && hasDetails) detailsRef = detailsOpen ? "" : String(item.ref) }
   function closeDetails() { if (!detailsOpen) return false; detailsRef = ""; return true }
   function focusApprove() { approve.forceActiveFocus() }
   onAnsweringChanged: if (!answering) chosen = ""
 
-  edge: Color.urgent
+  edge: popup ? tokens.attentionColor : Color.urgent
   tinted: true
-  dismissable: false
+  dismissable: popup
   holding: detailsOpen
   firstControl: approve
   Accessible.name: heading + ": " + summary
@@ -69,16 +69,16 @@ Toast {
     Copy {
       id: headingText
       width: Math.min(implicitWidth, parent.width - (askedText.visible ? askedText.implicitWidth + parent.spacing : 0))
-      text: root.heading
+      text: root.popup ? StatusModel.requestHeading(root.item, root.name, root.service && root.item ? root.service.sessions[root.item.computer_id] : null) : root.heading
       font.bold: true
-      color: root.tokens.textTint(root.tokens.attentionColor)
+      color: root.tokens.textTint(root.popup ? root.edge : root.tokens.attentionColor)
       wrapMode: Text.NoWrap
       elide: Text.ElideRight
     }
     Copy {
       id: askedText
       // The quick panel is narrow: the heading has the line to itself.
-      visible: text !== "" && !root.compact
+      visible: text !== "" && !root.compact && !root.popup
       text: root.unreachable ? "not answering right now" : root.asked
       color: root.unreachable ? root.tokens.textTint(root.tokens.pausedColor) : root.tokens.dim
       font.pixelSize: Style.font.bodySmall
@@ -90,15 +90,17 @@ Toast {
   // it wraps and is never cut.
   Copy {
     width: parent.width
-    text: root.summary
+    text: root.popup ? StatusModel.requestPopupText(root.item) : root.summary
+    maximumLineCount: root.popup ? 1 : 2147483647
+    elide: Text.ElideRight
     font.pixelSize: root.compact ? Style.font.bodySmall : Style.font.body
   }
-  Copy { visible: root.unreachable; width: parent.width; text: root.unreachableReason; color: root.tokens.textTint(root.tokens.pausedColor); font.pixelSize: Style.font.bodySmall }
+  Copy { visible: root.unreachable && !root.popup; width: parent.width; text: root.unreachableReason; color: root.tokens.textTint(root.tokens.pausedColor); font.pixelSize: Style.font.bodySmall }
   // Details: what the agent asks for, one labeled line each, in a box that scrolls rather than
   // push the answers out of the toast.
   Flickable {
     id: detailsBox
-    visible: root.detailsOpen
+    visible: root.detailsOpen && !root.popup
     width: parent.width
     height: Math.min(factsColumn.implicitHeight, Style.space(root.compact ? 120 : 200))
     contentWidth: width
@@ -167,7 +169,7 @@ Toast {
       onClicked: if (!blocked) root.answer("always")
     }
     ActionButton {
-      visible: root.hasDetails
+      visible: root.hasDetails && !root.popup
       label: (root.detailsOpen ? "Hide Details" : "Details") + (root.keyHints ? " (I)" : "")
       role: "quiet"
       size: "small"
@@ -176,7 +178,7 @@ Toast {
       onClicked: root.toggleDetails()
     }
     ActionButton {
-      visible: root.detailsOpen && root.request !== ""
+      visible: root.detailsOpen && !root.popup && root.request !== ""
       label: "Copy Request"
       role: "quiet"
       size: "small"

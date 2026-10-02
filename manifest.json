@@ -24,7 +24,13 @@
     "defaultSection": "right",
     "defaults": {
       "openRefreshSec": 5,
-      "closedRefreshSec": 15
+      "closedRefreshSec": 15,
+      "request_popups": true,
+      "popup_approvals": true,
+      "popup_logins": true,
+      "popup_questions": true,
+      "popup_dnd": false,
+      "popup_desktop_notifications": false
     },
     "schema": [
       {
