@@ -249,14 +249,14 @@ FocusScope {
       service: root.service
       host: root.host
       item: root.service ? root.service.loginByRef(refKey) : null
-      onSettingsWanted: if (root.host) root.host.showSettings()
+      onSettingsWanted: if (root.host) root.host.showLogins()
     }
   }
   Component {
     id: loginSetupToast
     LoginSetupCard { host: root.host; service: root.service }
   }
-  // A site that rejected a shared login: the agent can't sign in there, so a person can with Take Control.
+  // A site that rejected a shared login: the agent can't sign in there, so a person can with Join.
   Component {
     id: loginRejectedToast
     Toast {
@@ -271,7 +271,7 @@ FocusScope {
       Accessible.name: rejectedText.text
       onDismissed: if (root.host) root.host.dismissToast(key)
       Copy { width: parent.width; text: rejected.entry ? rejected.entry.site + " didn't accept your login on " + rejected.name : ""; font.bold: true; color: root.tokens.textTint(root.tokens.attentionColor) }
-      Copy { id: rejectedText; width: parent.width; text: "It still shows its sign-in page, so the agent there can't go on. Take Control to sign in yourself."; font.pixelSize: Style.font.bodySmall }
+      Copy { id: rejectedText; width: parent.width; text: "It still shows its sign-in page, so the agent there can't go on. Join to sign in yourself."; font.pixelSize: Style.font.bodySmall }
       TakeControlButton {
         id: takeButton
         service: root.service

@@ -2,6 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "Reveal.js" as Reveal
+import "SettingsText.js" as SettingsText
 
 // Settings, as ibarad describes them: sections of settings, each a title, one help line and the
 // control for its type (a switch, a row of choices, or a field for a number, text or shortcut).
@@ -21,7 +22,7 @@ Item {
   // key -> a line or two the page adds under that setting.
   property var notes: ({})
   // key -> a Component the page adds under that setting's words, for what isn't one setting
-  // (Logins: the browser logins come from and the All Computers rules).
+  // (Logins: a site count and the Manage Logins button).
   property var extras: ({})
   // Shown while there are no sections at all: still loading, or why they couldn't be read.
   property color emptyColor: tokens.dim
@@ -149,7 +150,8 @@ Item {
 
     Item {
       width: parent.width
-      height: Math.max(sectionTitle.implicitHeight, resetSection.visible ? resetSection.height : 0) + Style.space(8)
+      height: sectionItem.section.id === "logins" ? 0 : Math.max(sectionTitle.implicitHeight, resetSection.visible ? resetSection.height : 0) + Style.space(8)
+      visible: sectionItem.section.id !== "logins"
       Keys.onUpPressed: function(event) { event.accepted = root.moveFromSection(sectionItem, -1) }
       Keys.onDownPressed: function(event) { event.accepted = root.moveFromSection(sectionItem, 1) }
       Copy {
@@ -188,14 +190,17 @@ Item {
         readonly property Item sectionBox: sectionItem
         readonly property var setting: sectionItem.settings[index] || ({})
         readonly property string key: root.textOf(setting.key)
-        readonly property string title: root.textOf(setting.title)
-        readonly property string kind: ["bool", "choice", "number", "shortcut"].indexOf(setting.type) !== -1 ? setting.type : "text"
+        readonly property string title: root.textOf(SettingsText.titles[key] || setting.title)
+        readonly property string kind: ["bool", "choice", "number", "shortcut", "summary"].indexOf(setting.type) !== -1 ? setting.type : "text"
+        readonly property bool choiceMenu: kind === "choice" && (root.choicesOf(setting).length > 3 || row.width < Style.space(650))
         readonly property string valueText: root.textOf(setting.value)
         readonly property bool changed: root.isChanged(setting)
         readonly property bool saving: root.busy[key] === true || typeof root.busy[key] === "string"
-        readonly property string help: root.textOf(setting.help) + (kind === "number" ? root.rangeSuffix(setting) : "")
+        readonly property string detail: [root.textOf(setting.details || SettingsText.details[key]), root.textOf(root.notes[key])].filter(function(line) { return line !== "" }).join("\n")
+        property bool detailsOpen: false
+        readonly property string help: root.textOf(SettingsText.help[key] || setting.help) + (kind === "number" ? root.rangeSuffix(setting) : "")
         readonly property string errorText: localError !== "" ? localError : root.errors[key] ? root.textOf(root.errors[key]) : ""
-        readonly property bool focusInside: switchBox.activeFocus || group.activeFocus || field.input.activeFocus || resetButton.activeFocus
+        readonly property bool focusInside: switchBox.activeFocus || group.activeFocus || choiceDropdown.opened || choiceDropdown.button.activeFocus || field.input.activeFocus || resetButton.activeFocus || infoButton.activeFocus
         // A field's number that is out of range, said here and never sent.
         property string localError: ""
         // The text last sent for this field, so Enter then leaving the field sends it once.
@@ -203,7 +208,8 @@ Item {
 
         function focusControl() {
           if (kind === "bool") switchBox.forceActiveFocus()
-          else if (kind === "choice") group.forceActiveFocus()
+          else if (kind === "choice") { if (choiceMenu) choiceDropdown.focusTrigger(); else group.forceActiveFocus() }
+          else if (kind === "summary") { if (summaryLoader.item) summaryLoader.item.focusDefault(); else root.focusSearch() }
           else field.focusInput()
         }
         function flip() {
@@ -245,7 +251,7 @@ Item {
         Component.onCompleted: field.text = valueText
 
         width: sectionItem.width
-        height: Math.max(words.implicitHeight, controls.height) + Style.space(20)
+        height: Math.max(words.implicitHeight, controls.height) + Style.space(14)
         visible: root.matches(setting)
         radius: 0
         color: focusInside ? Qt.alpha(Color.accent, 0.08) : "transparent"
@@ -258,18 +264,33 @@ Item {
           id: words
           x: Style.space(10)
           anchors.verticalCenter: parent.verticalCenter
-          // A help line stays within about 90 characters; the control keeps to the right.
+          // Short help stays on one line; the control keeps to the right.
           width: Math.min(root.tokens.proseWidth, Math.max(Style.space(160), row.width - x - controls.width - Style.space(34)))
           spacing: Style.space(3)
           Row {
+            visible: row.kind !== "summary"
             width: parent.width
             spacing: Style.space(6)
             Copy {
               id: titleText
-              width: Math.min(implicitWidth, parent.width - (savingText.visible ? savingText.implicitWidth + parent.spacing : 0))
+              width: Math.min(implicitWidth, parent.width - (savingText.visible ? savingText.implicitWidth + parent.spacing : 0) - (infoButton.visible ? infoButton.width + parent.spacing : 0))
               text: row.title
               font.bold: true
             }
+            ActionButton {
+              id: infoButton
+              anchors.verticalCenter: parent.verticalCenter
+            visible: row.detail !== ""
+            size: "small"
+            role: "quiet"
+            label: "ⓘ"
+            selected: row.detailsOpen
+            tooltipText: "Learn More"
+            Accessible.name: "Learn more about " + row.title
+            Accessible.role: Accessible.Button
+            Accessible.description: row.detailsOpen ? "Expanded" : "Collapsed"
+            onClicked: row.detailsOpen = !row.detailsOpen
+          }
             Copy {
               id: savingText
               visible: row.saving
@@ -284,15 +305,16 @@ Item {
             visible: text !== ""
             width: parent.width
             text: row.help
+            wrapMode: Text.NoWrap
+            elide: Text.ElideRight
             dimmed: true
             font.pixelSize: Style.font.bodySmall
           }
-          // What the page adds under a setting (notes), such as which computers can't stream Live Video.
           Copy {
-            visible: text !== ""
+            visible: row.detailsOpen && row.detail !== ""
             width: parent.width
-            text: root.textOf(root.notes[row.key])
-            color: root.tokens.foreground
+            text: row.detail
+            dimmed: true
             font.pixelSize: Style.font.bodySmall
           }
           Copy {
@@ -303,6 +325,7 @@ Item {
             font.pixelSize: Style.font.bodySmall
           }
           Loader {
+            id: summaryLoader
             active: !!root.extras[row.key]
             visible: active
             width: parent.width
@@ -363,8 +386,8 @@ Item {
 
           ButtonGroup {
             id: group
-            visible: row.kind === "choice"
-            focusable: row.kind === "choice"
+            visible: row.kind === "choice" && !row.choiceMenu
+            focusable: visible
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(6)
             options: row.kind === "choice" ? root.choicesOf(row.setting) : []
@@ -377,6 +400,17 @@ Item {
             Accessible.name: row.title
             Accessible.description: row.help
             onChanged: function(value) { if (value !== row.valueText) root.changeRequested(row.key, value) }
+          }
+
+          ActionMenu {
+            id: choiceDropdown
+            visible: row.choiceMenu
+            anchors.verticalCenter: parent.verticalCenter
+            size: "small"
+            label: root.valueWords(row.setting, row.setting.value) + " ▾"
+            accessibleName: row.title
+            items: root.choicesOf(row.setting).map(function(choice) { return {id: choice.value, label: choice.label, selected: choice.value === row.valueText} })
+            onTriggered: value => { if (value !== row.valueText) root.changeRequested(row.key, value) }
           }
 
           FieldInput {
@@ -487,7 +521,7 @@ Item {
     Column {
       id: leftColumn
       width: root.columnWidth
-      spacing: Style.space(22)
+      spacing: Style.space(14)
       Copy {
         visible: root.sections.length === 0 || !root.anyMatch
         width: parent.width
@@ -504,7 +538,7 @@ Item {
       id: rightColumn
       x: root.columnWidth + root.tokens.columnGap
       width: root.columnWidth
-      spacing: Style.space(22)
+      spacing: Style.space(14)
       Repeater {
         id: rightRepeater
         model: root.sections.length - root.splitAt

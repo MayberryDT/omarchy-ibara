@@ -26,7 +26,7 @@ function titleCase(value) {
 var CORE_PHRASES = [
   [/The operator reply was lost\./i, "ibara lost the reply, so it can't tell whether this finished."],
   [/Operator request failed; inspect target status/i, "%NAME% closed the connection; your access may have changed. ibara will check again."],
-  [/Control response changed target binding/i, "%NAME% changed its pairing during this request. ibara is reconnecting; choose Take Control again once it answers."],
+  [/Control response changed target binding/i, "%NAME% changed its pairing during this request. ibara is reconnecting; choose Join again once it answers."],
   [/Handback did not prove settled ownership/i, "%NAME% didn't confirm that the hand back finished. ibara is checking."],
   [/Retained publication is uncertain/i, "ibara can't tell whether the file arrived. Look for it in the Files tab before sending it again."],
   [/Upload \S+ is partial or uncertain/i, "The upload stopped part-way. Use Retry under Transfers in the Files tab to finish it."],
@@ -481,7 +481,7 @@ function pairingView(data) {
 // ends (0: until revoked), who used it, and the code (only right after it is made).
 var SHARE_LEVELS = ["watch", "use_with_approval", "take_control"]
 function shareLevelLabel(level) {
-  return level === "watch" ? "Watch" : level === "use_with_approval" ? "Use with Approval" : level === "take_control" ? "Take Control" : ""
+  return level === "watch" ? "Watch" : level === "use_with_approval" ? "Use with Approval" : level === "take_control" ? "Join" : ""
 }
 function inviteView(value) {
   var i = asObject(value)
@@ -532,7 +532,7 @@ function listOf(value, key) {
 // (repair.needs_person) needs attention, and so does one where an agent waits for your approval
 // or your answer (`waiting`, from fleet-attention), unless it is offline: an answer can't reach it.
 // A computer that answers with its screen locked (`locked`) is "locked": agents can't use it and
-// Take Control is how a person unlocks it.
+// Join is how a person unlocks it.
 var ATTENTION_TASK_STATES = ["waiting_for_human", "interrupted", "blocked"]
 // Preview notes that are routine while a frame is on its way; any other note without a frame needs a look.
 var ROUTINE_FRAME_NOTES = /^(Preview pending|Preview unavailable|Waiting for an authorized preview\.|Not previewed: |Preview released |Controller restarted|This computer has no display yet\.|ibara dropped a picture |BUDGET_EXCEEDED\b)/
@@ -641,7 +641,7 @@ function activityLine(session, nowMs) {
     if (power) return power
     return session.frame ? "No reply · last frame shown" : "No reply"
   }
-  if (state === "locked") return "Screen locked · Take Control to unlock"
+  if (state === "locked") return "Screen locked · Join to unlock"
   if (state === "human" && session.locked === true) return "Screen locked · type its password in the viewer"
   if (state === "connecting") return "Connecting…"
   if (state === "attention") {
@@ -689,7 +689,7 @@ function decorateSession(session) {
 // rail shows them as short marks in columns. The local owner is the computer's own person and is
 // not listed. Names read as on the Access tab: "You (riley)", "sam's laptop", "codex@relay".
 var PERMISSION_MARKS = [
-  { key: "watch", label: "Watch" }, { key: "files", label: "Files" }, { key: "control", label: "Take Control" },
+  { key: "watch", label: "Watch" }, { key: "files", label: "Files" }, { key: "control", label: "Join" },
   { key: "agents", label: "Agent Tasks" }, { key: "administer", label: "Administer" }]
 function whoCanUse(access, ownPrincipal) {
   var rows = listOf(asObject(access), "rows"), own = String(ownPrincipal || ""), out = []
@@ -881,6 +881,8 @@ function loginSettingsView(data) {
     if (requestId(entry.computer) && loginSite(entry.site) && isFinite(at) && at > 0) rejected.push({ computer: String(entry.computer), site: loginSite(entry.site), at: at })
   }
   return { enabled: d.enabled === true, decided: d.decided === true, browser: String(d.browser || ""), profile: clip(d.profile, 100), label: clip(d.label, 128),
+    siteCount: Math.max(Object.keys(rules).length, Math.floor(Number(d.site_count) || 0)),
+    ruleRows: (Array.isArray(d.rule_rows) ? d.rule_rows : Object.keys(rules).map(function(site) { return {site: site, computer: "all", rule: rules[site]} })).filter(function(row) { return row && loginSite(row.site) && (row.computer === "all" || computers[row.computer]) && LOGIN_RULES.indexOf(row.rule) !== -1 }),
     connected: d.connected === true, installable: d.installable === true, browsers: browsers, allRules: rules, computers: computers,
     targetRole: d.target_role === true, rejected: rejected }
 }
@@ -926,7 +928,7 @@ function loginAnswerWords(outcomes, browser, computer) {
 // A write ibara couldn't confirm (outcome `unknown`).
 function loginUnknownWords(sites) {
   var list = Array.isArray(sites) ? sites : []
-  return list.length ? "Couldn't confirm the login for " + listWords(list) + " was written. Try Share again or use Take Control." : ""
+  return list.length ? "Couldn't confirm the login for " + listWords(list) + " was written. Try Share again or use Join." : ""
 }
 // "You're not signed in to sos.ok.gov in Brave. Sign in there, then choose Retry."
 function loginSignedOutWords(sites, browser) {
@@ -1174,10 +1176,10 @@ function unattendedBootSections(data) {
   var help = clip(data.help, 200)
   if (data.note) help += (help ? " " : "") + clip(data.note, 200)
   var settings = [{
-    key: "unattended_boot", title: "Start without the disk password", help: help, type: "bool", choices: [],
+    key: "unattended_boot", title: "Start Without the Disk Password", help: "Start this computer without typing the disk password.", details: help, type: "bool", choices: [],
     value: state !== "off", default: false, scope: "console", available: data.available === true }]
   if ((typeof data.automatic_sign_in === "string" && data.automatic_sign_in) || data.lock_at_sign_in === true)
-    settings.push({ key: "lock_at_sign_in", title: "Lock the screen at sign-in", help: clip(data.lock_help, 200), type: "bool", choices: [],
+    settings.push({ key: "lock_at_sign_in", title: "Lock the Screen at Sign-In", help: "Lock the screen after automatic sign-in.", details: clip(data.lock_help, 200), type: "bool", choices: [],
       value: data.lock_at_sign_in === true, default: false, scope: "console", available: true })
   return [{ id: "this_computer", title: "This Computer", settings: settings }]
 }
@@ -1287,7 +1289,7 @@ function problemWords(session, label) {
     return { heading: heading, body: body, wake: wake }
   }
   if (computerState(session) === "locked")
-    return { heading: name + "'s screen is locked", body: "Its agents can't use it until it's unlocked. Choose Take Control on its card to unlock it.", wake: false }
+    return { heading: name + "'s screen is locked", body: "Its agents can't use it until it's unlocked. Choose Join on its card to unlock it.", wake: false }
   var connection = String(session.connection || ""), task = asObject(session.active_task)
   var why
   if (session.trust_state !== undefined && session.trust_state !== "verified") why = "It isn't paired with this computer anymore. Pair it again from Add Computer."

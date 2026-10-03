@@ -22,7 +22,7 @@ Item {
   readonly property bool editable: canAdminister && !!service && !service.mutating
   readonly property string editReason: !access ? "" : !canAdminister ? "You can't change access on " + computerLabel + "." : service && service.mutating ? "Wait for the current action to finish." : ""
   readonly property var capabilities: [
-    {key: "watch", label: "Watch"}, {key: "files", label: "Files"}, {key: "control", label: "Take Control"},
+    {key: "watch", label: "Watch"}, {key: "files", label: "Files"}, {key: "control", label: "Join"},
     {key: "agents", label: "Agent Tasks"}, {key: "administer", label: "Administer"}
   ]
   readonly property var effectClasses: [

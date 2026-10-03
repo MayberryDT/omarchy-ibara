@@ -6,7 +6,7 @@ import "StatusModel.js" as StatusModel
 // (copies one site's login from your browser to an agent's computer, only when you allow it),
 // that the browser will say "Managed by your organization", and the browsers and profiles found
 // here, with a choice when there are several. Turn On makes this the computer logins come from;
-// Not Now leaves sharing off (Settings under Logins turns it on later).
+// Not Now leaves sharing off (the Logins page turns it on later).
 Toast {
   id: root
   property var host: null
@@ -79,7 +79,7 @@ Toast {
       role: "quiet"
       size: "small"
       blocked: root.working
-      tooltipText: "Leave login sharing off. You can turn it on in Settings under Logins."
+      tooltipText: "Leave login sharing off. You can turn it on in the Logins page."
       onClicked: if (!blocked && root.service) root.service.loginNotNow()
     }
   }

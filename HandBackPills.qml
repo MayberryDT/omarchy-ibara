@@ -45,7 +45,7 @@ Item {
           spacing: Style.space(10)
           Copy {
             anchors.verticalCenter: parent.verticalCenter
-            text: root.service.computerLabelFor(pill.modelData)
+            text: "Your Turn · " + root.service.computerLabelFor(pill.modelData)
             width: Math.min(implicitWidth, Style.space(180))
             wrapMode: Text.NoWrap
             elide: Text.ElideRight

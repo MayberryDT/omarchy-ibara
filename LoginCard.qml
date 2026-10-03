@@ -88,7 +88,7 @@ Toast {
     unticked = next
   }
   // With one browser and profile to choose, Turn On Login Sharing turns it on here; with more,
-  // Settings under Logins has the choice.
+  // the Logins page has the choice.
   function turnOn(button) {
     if (!service || turnOnReason) return
     var choices = settings.browsers.filter(function(b) { return b.supported }).reduce(function(n, b) { return n + b.profiles.length }, 0)

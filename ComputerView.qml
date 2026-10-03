@@ -23,7 +23,7 @@ Item {
   readonly property string computerLabel: tokens.label(computer)
   readonly property bool holding: !!host && !!computerId && host.holds(computerId)
   readonly property bool viewerOpen: holding && host.viewerOpen(computerId)
-  // T, V and H from the console (Console.handleKey): the header's Take Control, Open or Close
+  // T, V and H from the console (Console.handleKey): the header's Join, Open or Close
   // Viewer and Hand Back, each with its key after its name. The button takes the keyboard, so a
   // confirmation attaches to it.
   function controlKey(control) {
@@ -289,7 +289,7 @@ Item {
         wrapMode: Text.NoWrap
         elide: Text.ElideRight
       }
-      // Secondary actions, then the one primary action last: Take Control, or, while you hold
+      // Secondary actions, then the one primary action last: Join, or, while you hold
       // control, Open Viewer then Hand Back in its place. Close stays apart, past a rule, so it is
       // never read as one of them.
       Row {
@@ -330,7 +330,7 @@ Item {
           computerId: root.computerId
           visible: !root.holding || connecting
           keyHint: " (T)"
-          Accessible.name: "Take Control"
+          Accessible.name: "Join"
         }
         ActionButton {
           id: viewerButton

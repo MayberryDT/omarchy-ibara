@@ -9,7 +9,7 @@ ActionButton {
   property string keyHint: ""
   property var confirmation: null
   readonly property bool connecting: !!service && service.connectingOn(computerId)
-  label: connecting ? "Connecting…" : "Take Control" + keyHint
+  label: connecting ? "Connecting…" : "Join" + keyHint
   role: "primary"
   blocked: !service || service.controlBlockedReason(computerId) !== ""
   disabledReason: service ? service.controlBlockedReason(computerId) : "This computer is not available."
@@ -29,7 +29,7 @@ ActionButton {
     var pending = confirmation
     confirmation = null
     if (pending && pending.valid()) pending.run()
-    else if (service) service.actionError = "Control changed. Try Take Control again."
+    else if (service) service.actionError = "Control changed. Try Join again."
     forceActiveFocus()
   }
   onComputerIdChanged: confirmation = null

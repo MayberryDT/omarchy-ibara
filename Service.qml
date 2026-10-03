@@ -1001,12 +1001,12 @@ Item {
   readonly property bool requestsInConsole: consoleOpen && consoleFocused
   // Inline plugin settings use Omarchy's existing persisted settings store.
   readonly property var requestSettingDefinitions: [
-    { key: "request_popups", title: "Request Pop-ups", help: "Show requests with their buttons while the console isn't focused.", fallback: true },
+    { key: "request_popups", title: "Request Pop-ups", help: "Show request pop-ups with answer buttons.", fallback: true },
     { key: "popup_approvals", title: "Approvals", help: "Show approval requests.", fallback: true },
     { key: "popup_logins", title: "Logins", help: "Show login requests.", fallback: true },
     { key: "popup_questions", title: "Questions", help: "Show agents' questions.", fallback: true },
     { key: "popup_dnd", title: "Show During Do Not Disturb", help: "Let request pop-ups appear during Do Not Disturb.", fallback: false },
-    { key: "popup_desktop_notifications", title: "Also Send Desktop Notifications", help: "Desktop notifications are always used when Request Pop-ups is off.", fallback: false }
+    { key: "popup_desktop_notifications", title: "Also Send Desktop Notifications", help: "Send requests to desktop notifications too.", fallback: false }
   ]
   readonly property var requestSettingsSections: [{ id: "request_popups", title: "Request Pop-ups", settings: requestSettingDefinitions.map(function(d) {
     return { key: d.key, title: d.title, help: d.help, type: "bool", scope: "console", value: root.requestBool(d.key), "default": d.fallback }
@@ -1058,7 +1058,7 @@ Item {
   function openRequest(item) {
     if (shell && item) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: item.computer_id, focus: "request", ref: item.ref }))
   }
-  function openRequestSettings() { if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "settings" })) }
+  function openRequestSettings() { if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "logins" })) }
   readonly property var requestItems: approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
   readonly property var popupRequests: !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
     ? requestItems.filter(function(item) {
@@ -1343,7 +1343,13 @@ Item {
   // epoch that reported it and while the session is ready; a restart, rebinding or denial clears it.
   function holdsControlOn(computerId) {
     var s = sessions[String(computerId || "")]
-    return !!s && s.holds_control === true && s.connection === "ready" && !!s.controller_epoch && s.holds_control_epoch === s.controller_epoch
+    return !!s && s.holds_control === true && (s.screen_engine !== "ibara" || s.turn === "person") && s.connection === "ready" && !!s.controller_epoch && s.holds_control_epoch === s.controller_epoch
+  }
+  function turnWords(computerId) {
+    var s = sessions[String(computerId || "")]
+    if (!s || !s.turn) return ""
+    if (s.turn === "person") return holdsControlOn(computerId) ? "Your Turn" : String(s.turn_holder || "A person") + "’s Turn"
+    return "Agent’s Turn"
   }
   readonly property var heldComputerIds: Object.keys(sessions).filter(function(id) { return root.holdsControlOn(id) }).sort()
   readonly property bool denied: connectionState === "unauthorized"
@@ -1711,14 +1717,14 @@ Item {
     if (holdsControlOn(computerId)) { actionError = "You already have control of this computer."; return false }
     if (!s || s.interactive_control !== "available_if_exclusive" || !s.controller_epoch ||
         !s.owner_name || !s.ownership_revision || mutating) {
-      actionError = mutating ? "Wait for the current action to finish." : "ibara is still reading who is using " + computerLabelFor(computerId) + ". Choose Take Control again in a moment."
+      actionError = mutating ? "Wait for the current action to finish." : "ibara is still reading who is using " + computerLabelFor(computerId) + ". Choose Join again in a moment."
       return false
     }
     pendingControl = { computer_id: computerId, endpoint_id: s.endpoint_id,
       binding_revision: s.binding_revision, controller_epoch: s.controller_epoch,
       authorization_generation: s.authorization_generation }
     startHelper("operator-take-control", ["operator-control", "--computer", computerId, "--epoch", s.controller_epoch,
-      "--op", "take_control", "--owner", s.owner_name, "--revision", s.ownership_revision])
+      "--op", s.screen_engine === "ibara" ? "join" : "take_control", "--owner", s.owner_name, "--revision", s.ownership_revision])
     return true
   }
   function connectingOn(computerId) {
@@ -1732,7 +1738,7 @@ Item {
     if (denied || s.connection === "unauthorized") return "You don't have access."
     if (s.trust_state !== "verified") return "Pair this computer first."
     if (s.connection !== "ready") return "This computer isn't answering."
-    if (s.interactive_control !== "available_if_exclusive") return "Take Control isn't available."
+    if (s.interactive_control !== "available_if_exclusive") return "Join isn't available."
     if (!s.controller_epoch || !s.owner_name || !s.ownership_revision) return "Still checking who has control."
     if (mutating) return "Wait for the current action to finish."
     return ""
@@ -1741,13 +1747,17 @@ Item {
     var reason = controlBlockedReason(computerId), s = sessions[computerId]
     if (reason) { if (!connectingOn(computerId)) actionError = reason; return false }
     if (holdsControlOn(computerId)) return viewerOpenOn(computerId) || openViewerFor(computerId)
+    if (s.screen_engine === "ibara" && viewerOpenOn(computerId)) {
+      actionNotice = computerLabelFor(computerId) + ": already watching."
+      return true
+    }
     // Only replacing another person asks first. The daemon still checks owner and revision.
-    if (/^operator:/.test(String(s.owner_name))) {
+    if (s.screen_engine !== "ibara" && /^operator:/.test(String(s.owner_name))) {
       var owner = s.owner_name, revision = s.ownership_revision, epoch = s.controller_epoch
       var endpoint = s.endpoint_id, binding = s.binding_revision, authorization = s.authorization_generation
       if (typeof confirm !== "function") return false
       confirm({ message: "Another person has control of " + computerLabelFor(computerId) + ". Take Over?",
-        confirmLabel: "Take Control", subject: computerId,
+        confirmLabel: "Join", subject: computerId,
         valid: function() { var now = root.sessions[computerId]; return !!now && now.controller_epoch === epoch && now.endpoint_id === endpoint && now.binding_revision === binding && now.authorization_generation === authorization && now.owner_name === owner && now.ownership_revision === revision },
         run: function() { root.takeControlFor(computerId) } })
       return true
@@ -1820,7 +1830,7 @@ Item {
   function pollVisibleStatus() {
     if (denied) return
     if (!panelOpen) {
-      heldComputerIds.forEach(function(id) { if (Date.now() - Number(root.statusPolledAt[id] || 0) >= root.statusFastMs - 100) root.pollStatus(id) })
+      Object.keys(viewers).concat(heldComputerIds).filter(function(id, i, ids) { return ids.indexOf(id) === i }).forEach(function(id) { if (Date.now() - Number(root.statusPolledAt[id] || 0) >= root.statusFastMs - 100) root.pollStatus(id) })
       return
     }
     var now = Date.now(), ids = statusComputerIds().slice(), fast = [], slow = []
@@ -1854,7 +1864,23 @@ Item {
     for (var f = 0; f < fast.length && f < 8; f++) pollStatus(fast[f])
     for (var w = 0; w < slow.length && w < 4; w++) pollStatus(slow[w])
   }
-  Timer { id: statusTick; interval: root.statusFastMs; repeat: true; running: (root.panelOpen || root.heldComputerIds.length > 0) && !root.denied; onTriggered: root.pollVisibleStatus() }
+  Timer { id: statusTick; interval: root.statusFastMs; repeat: true; running: (root.panelOpen || root.heldComputerIds.length > 0 || Object.keys(root.viewers).length > 0) && !root.denied; onTriggered: root.pollVisibleStatus() }
+  // Keep turn presence live even while the console itself is hidden.
+  Timer { interval: 250; repeat: true; running: Object.keys(root.viewers).length > 0 && !root.denied; onTriggered: Object.keys(root.viewers).forEach(function(id) { root.pollStatus(id) }) }
+  property var pendingFallbackViewers: ({})
+  Timer { interval: 250; repeat: true; running: Object.keys(root.pendingFallbackViewers).length > 0 && !root.mutating; onTriggered: root.fallbackViewerFor(Object.keys(root.pendingFallbackViewers)[0]) }
+  function fallbackViewerFor(id) {
+    var s = sessions[id]
+    if (mutating) return
+    var waiting = Object.assign({}, pendingFallbackViewers)
+    delete waiting[id]
+    pendingFallbackViewers = waiting
+    if (!viewerOpenOn(id) || !s || !s.fallback_reason) return
+    pendingControl = { computer_id: id, endpoint_id: s.endpoint_id, binding_revision: s.binding_revision,
+      controller_epoch: s.controller_epoch, authorization_generation: s.authorization_generation }
+    startHelper("operator-take-control", ["operator-control", "--computer", id, "--epoch", s.controller_epoch,
+      "--op", "screen_failed", "--owner", s.owner_name, "--revision", s.ownership_revision])
+  }
   readonly property string previewLimitNotice: "Not previewed: at most 20 computers preview at once. Scroll or filter to see this one."
   // `large`: the wall shows these as at most four large cards, which preview at selected quality
   // at the Fleet picture interval (as tiles do), so their pictures stay sharp.
@@ -2177,7 +2203,7 @@ Item {
         backoff[computerId] = { delay: delay, failed: Date.now(), until: Date.now() + Math.round(delay * (0.8 + Math.random() * 0.4)) }
         previewBackoff = backoff
       }
-      updated[computerId] = Object.assign({}, session, { connection: offline ? "offline" : session.connection, locked: locked || session.locked === true, frame_error: locked ? "Screen locked · Take Control to unlock" : StatusModel.clip(message, 200) })
+      updated[computerId] = Object.assign({}, session, { connection: offline ? "offline" : session.connection, locked: locked || session.locked === true, frame_error: locked ? "Screen locked · Join to unlock" : StatusModel.clip(message, 200) })
     } else {
       var epochChanged = targetEpochChanged(error)
       invalidateTargetPreviews(computerId)
@@ -2251,13 +2277,13 @@ Item {
 
   // Commands for the computer in scope, over its pairing route.
   function openViewerFor(computerId) {
-    if (!holdsControlOn(computerId) || mutating) { actionError = mutating ? "Wait for the current action to finish." : "Choose Take Control first. Open Viewer works while you hold control."; return false }
+    if ((!holdsControlOn(computerId) && (!sessions[computerId] || sessions[computerId].screen_engine !== "ibara")) || mutating) { actionError = mutating ? "Wait for the current action to finish." : "Choose Join to open this screen."; return false }
     var epoch = sessions[String(computerId)] && sessions[String(computerId)].controller_epoch
     pendingViewerComputerId = String(computerId)
     startHelper("open-viewer", ["open-viewer", "--computer", String(computerId)].concat(epoch ? ["--epoch", String(epoch)] : []))
     return true
   }
-  // The viewer this console opened for each computer (computer → pid, from the Take Control and
+  // The viewer this console opened for each computer (computer → pid, from the Join and
   // Open Viewer answers), kept while that process runs, so the console offers Open Viewer or
   // Close Viewer as it really is, also after the person closes the viewer window themselves.
   property var viewers: ({})
@@ -2329,18 +2355,18 @@ Item {
       }
     }
   }
-  // Close Viewer closes only the viewer: the computer stays yours and paused until Hand Back.
+  // Close Viewer closes the window; Sunshine retains its existing pause until Hand Back.
   function closeViewerFor(computerId) {
     var id = String(computerId || ""), pid = viewers[id]
     if (!pid) return false
     var closer = oneShotComponent.createObject(root)
-    closer.command = ["sh", "-c", "case \"$(cat /proc/$1/comm 2>/dev/null)\" in ibara-view|moonlight) kill -TERM \"$1\";; esac", "sh", String(pid)]
+    closer.command = ["sh", "-c", "case \"$(cat /proc/$1/comm 2>/dev/null)\" in ibara-screen|ibara-view|moonlight) kill -TERM \"$1\";; esac", "sh", String(pid)]
     closer.running = true
     noteViewer(id, 0)
     viewerDidClose(id)
     return true
   }
-  // Every 1.5 s while a viewer is open: which of them still run (ibara-view, or Moonlight for an
+  // Every 1.5 s while a viewer is open: which of them still run (ibara-screen, ibara-view, or Moonlight for an
   // older computer, checked by name so a reused process id never counts).
   Timer {
     interval: 1500
@@ -2351,7 +2377,7 @@ Item {
       var pids = []
       for (var id in root.viewers) pids.push(root.viewers[id])
       viewerCheck.checked = pids
-      viewerCheck.command = ["sh", "-c", "for p; do case \"$(cat /proc/$p/comm 2>/dev/null)\" in ibara-view|moonlight) echo \"$p\";; esac; done", "sh"].concat(pids.map(String))
+      viewerCheck.command = ["sh", "-c", "for p; do case \"$(cat /proc/$p/comm 2>/dev/null)\" in ibara-screen|ibara-view|moonlight) echo \"$p\";; esac; done", "sh"].concat(pids.map(String))
       viewerCheck.running = true
     }
   }
@@ -2452,7 +2478,7 @@ Item {
   function loadConnectPrompt() { if (!readPending("connect-prompt")) requestRead("connect-prompt", ["connect-prompt"]) }
   function sameValue(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
   // Adding computers and the everyday features below take a lane of their own
-  // (the side lane): several run at once, and none holds up Take Control or a file transfer.
+  // (the side lane): several run at once, and none holds up Join or a file transfer.
   function sideSend(args, route) {
     sideSequence += 1
     daemonSend("side-" + sideSequence + "-" + args[0], args, Object.assign({ kind: "side", op: String(args[0]) }, route || {}))
@@ -2983,7 +3009,7 @@ Item {
       var actions = []
       for (var j = 0; item.options.length <= 2 && j < item.options.length; j++) actions.push("-A", "option-" + j + "=" + StatusModel.titleCase(item.options[j]))
       if (!actions.length) actions = ["-A", "open=Open"]
-      if (sessions[item.computer_id] && sessions[item.computer_id].interactive_control === "available_if_exclusive") actions.push("-A", "take=Take Control")
+      if (sessions[item.computer_id] && sessions[item.computer_id].interactive_control === "available_if_exclusive") actions.push("-A", "take=Join")
       notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "normal", "-t", "15000", "-A", "default=Open"].concat(actions,
         ["--", name + " needs your answer", StatusModel.requestNoticeBody(item, name, sessions[item.computer_id], item.summary)])
       notice.running = true
@@ -2999,7 +3025,7 @@ Item {
       notice.answered = true
       openRequest({ computer_id: notice.computerId, ref: notice.ref })
     } else if (notice.question && text === "take") {
-      if (!takeControlFor(notice.computerId) && !consoleOpen) queueNotice({ title: "ibara", body: actionError || "Take Control could not start. Open the console to check this computer." })
+      if (!takeControlFor(notice.computerId) && !consoleOpen) queueNotice({ title: "ibara", body: actionError || "Join could not start. Open the console to check this computer." })
     } else if (notice.question && /^option-[0-9]+$/.test(text)) {
       var index = Number(text.substring(7))
       if (index >= notice.options.length) return
@@ -3186,7 +3212,7 @@ Item {
     sendLogin(["login-sync"], { busyKey: "login-sync" })
     return true
   }
-  // Sites that rejected a shared login: one toast each, with Take Control, until put away.
+  // Sites that rejected a shared login: one toast each, with Join, until put away.
   property var loginRejectedSeen: ({})
   property var loginRejected: []
   readonly property double loginRejectedSince: Date.now() - 600000
@@ -3227,7 +3253,7 @@ Item {
       loadLoginSettings()
     } else if (op === "login-not-now") {
       if (error) { reportError(plain || "ibara couldn't save your answer.", "", ""); return }
-      actionNotice = "Login sharing stays off. You can turn it on in Settings under Logins."
+      actionNotice = "Login sharing stays off. You can turn it on in the Logins page."
       loadLoginSettings()
     } else if (op === "login-off") {
       if (error) { reportError(plain || "ibara couldn't turn off login sharing.", "", ""); return }
@@ -3264,7 +3290,7 @@ Item {
       if (words.note) actionNotice = words.note
       if (words.waiting) loginNote("login-waiting:" + route.ref, words.waiting, true)
       if (words.unknown) loginNote("login-unknown:" + route.ref, words.unknown, true)
-      if (words.off) { loginNote("login-off:" + route.ref, "Login sharing is off, so nothing was shared. Turn it on in Settings under Logins.", true); loadLoginSettings() }
+      if (words.off) { loginNote("login-off:" + route.ref, "Login sharing is off, so nothing was shared. Turn it on in the Logins page.", true); loadLoginSettings() }
       if (route.fromNotice && !consoleOpen) {
         var said = [words.note, words.waiting, words.unknown, StatusModel.loginSignedOutWords(words.signedOut, loginBrowserName)].filter(function(t) { return t !== "" }).join(" ")
         if (said) queueNotice({ title: "ibara", body: said })
@@ -3281,7 +3307,7 @@ Item {
       var older = olderLoginWords(data.older)
       if (parts.length) actionNotice = parts.join(" ")
       else if (!unknown.length && !older) actionNotice = "Nothing was shared: none of those computers can take it."
-      if (unknown.length) loginNote("login-share-unknown:" + route.site, "Couldn't confirm the login for " + route.site + " was written on " + StatusModel.listWords(unknown) + ". Try Share With… again or use Take Control.", true)
+      if (unknown.length) loginNote("login-share-unknown:" + route.site, "Couldn't confirm the login for " + route.site + " was written on " + StatusModel.listWords(unknown) + ". Try Share With… again or use Join.", true)
       if (older) loginNote("login-older", older, true)
       loadLoginSettings()
       if (loginRowsComputerId) loadLoginRows(loginRowsComputerId)
@@ -3305,7 +3331,7 @@ Item {
       var olderSync = olderLoginWords(plan.older)
       if (olderSync) loginNote("login-older", olderSync, true)
       var unknownSync = (Array.isArray(data.unknown) ? data.unknown : []).map(function(id) { return computerLabelFor(String(id)) })
-      if (unknownSync.length) loginNote("login-sync-unknown", "Couldn't confirm the logins were written on " + StatusModel.listWords(unknownSync) + ". Try Sync Logins again or use Take Control.", true)
+      if (unknownSync.length) loginNote("login-sync-unknown", "Couldn't confirm the logins were written on " + StatusModel.listWords(unknownSync) + ". Try Sync Logins again or use Join.", true)
       loadLoginSettings()
       if (loginRowsComputerId) loadLoginRows(loginRowsComputerId)
     }
@@ -4108,6 +4134,8 @@ Item {
           statusSessions[request.ref] = Object.assign({}, identity, {
             connection: "ready", observation: authenticated.observation, outputs: outputs,
             interactive_control: authenticated.interactive_control,
+            turn: authenticated.turn, turn_holder: authenticated.turn_holder, turn_since_ms: authenticated.turn_since_ms,
+            screen_engine: authenticated.screen_engine, fallback_reason: authenticated.fallback_reason,
             owner_name: authenticated.owner, ownership_revision: authenticated.ownership_revision,
             holds_control: authenticated.holds_control === true, holds_control_epoch: identity.controller_epoch,
             active_task_ref: /^[A-Za-z0-9_.:-]{1,128}$/.test(String(authenticated.active_task_ref || "")) ? authenticated.active_task_ref : "",
@@ -4126,7 +4154,7 @@ Item {
             needs_person: StatusModel.needsPersonView(authenticated.repair && authenticated.repair.needs_person),
             wake: authenticated.wake !== undefined ? StatusModel.wakeView(authenticated.wake) : identity.wake || null,
             power_state: "",
-            // Its screen is locked: agents can't use it until a person unlocks it with Take Control.
+            // Its screen is locked: agents can't use it until a person unlocks it with Join.
             locked: authenticated.locked === true,
             disk_password: authenticated.disk_password !== undefined ? authenticated.disk_password === true : identity.disk_password === true,
             omarchy_update: StatusModel.omarchyUpdateView(authenticated.omarchy_update),
@@ -4138,6 +4166,11 @@ Item {
           publishSessions(statusSessions)
           clearRetryState(request.ref)
           noteStatusMoments(request.ref, identity, statusSessions[request.ref])
+          if (identity.screen_engine === "ibara" && authenticated.screen_engine === "sunshine" && authenticated.fallback_reason && viewerOpenOn(request.ref)) {
+            var fallbackWaiting = Object.assign({}, pendingFallbackViewers)
+            fallbackWaiting[request.ref] = true
+            pendingFallbackViewers = fallbackWaiting
+          }
           }
         } else if (identity && data.computer_id === request.ref && (identity.active_task_ref || identity.active_task)) {
           var staleSessions = Object.assign({}, sessions)
@@ -4373,7 +4406,7 @@ Item {
             : kind === "window-close" ? (done.closed === true ? "closed" : "open")
             : done.moved === true ? "moved" : "failed"
           if (windowOutcome === "closed") actionNotice = "Closed " + StatusModel.clip(windowOp.title, 80) + "."
-          // As Take Control does: the approval arrives with the others, and the person asks again after it.
+          // As Join does: the approval arrives with the others, and the person asks again after it.
           if (windowOutcome.indexOf("pending-") === 0) {
             actionNotice = "Waiting for approval. After approval, choose " + (kind === "window-close" ? "Close" : "Move To…") + " again."
             loadAttention()
@@ -4409,24 +4442,27 @@ Item {
           return
         }
         if (reply.state === "pending_approval") {
-          actionNotice = "Waiting for approval. After approval, choose Take Control again."
+          actionNotice = "Waiting for approval. After approval, choose Join again."
           loadAttention()
           return
         }
         var refreshed = Object.assign({}, sessions)
         refreshed[control.computer_id] = Object.assign({}, current, {
           owner_name: reply.owner, ownership_revision: reply.ownership_revision,
-          holds_control: kind === "operator-take-control" && reply.viewer_ready === true,
+          screen_engine: reply.screen_engine || current.screen_engine,
+          turn: reply.screen_engine === "ibara" ? (reply.turn || current.turn || "agent") : current.turn,
+          holds_control: reply.screen_engine === "ibara" ? reply.turn === "person" : kind === "operator-take-control" && reply.viewer_ready === true,
           holds_control_epoch: control.controller_epoch
         })
         publishSessions(refreshed)
-        // The viewer Take Control opened; Hand Back closes it.
+        // The viewer Join opened; Hand Back closes it.
         noteViewer(control.computer_id, kind === "operator-take-control" && proof.viewer_started === true ? proof.viewer_pid : 0)
+        if (reply.fallback_reason) actionNotice = "Using Sunshine: " + StatusModel.clip(String(reply.fallback_reason), 180)
         if (kind === "operator-handback") keepControl(control.computer_id)
         // Hand Back lets agents work again (owner "none") unless someone paused them: a person
         // (before or while holding control), or ibara while it settles the computer.
-        actionNotice = kind === "operator-take-control" ?
-          computerLabelFor(control.computer_id) + ": you have control." :
+        actionNotice = reply.fallback_reason ? "Using Sunshine: " + StatusModel.clip(String(reply.fallback_reason), 180) : kind === "operator-take-control" ?
+          (reply.screen_engine === "ibara" ? computerLabelFor(control.computer_id) + ": watching. Click, scroll, or press a key for your turn." : computerLabelFor(control.computer_id) + ": you have control.") :
           reply.owner === "none" ? "You handed back control. Its agents can work again." :
           reply.pause_origin === "system" ? "You handed back control. Its agents stay paused until ibara has settled the computer." :
           "You handed back control. Its agents stay paused because a person paused them; choose Resume to let them work again."

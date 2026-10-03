@@ -32,7 +32,7 @@ Item {
   readonly property string standingText: !settings ? "ibara on this computer can't share logins. Update ibara here to share logins with your computers."
     : standing && standing.older ? computerLabel + " runs an older ibara. Update ibara there to share logins with it."
     : elsewhere ? "Logins for " + computerLabel + " come from " + elsewhere + ". Change them on " + elsewhere + "'s console."
-    : !sharing ? "Login sharing is off. Turn it on in Settings under Logins to share your logins with " + computerLabel + "."
+    : !sharing ? "Login sharing is off. Turn it on in the Logins page to share your logins with " + computerLabel + "."
     : ""
   // Your other computers for Share With… (a computer shared with a friend is never listed).
   readonly property var shareTargets: {
@@ -50,9 +50,13 @@ Item {
 
   function reload() { if (service && visible && computerId && settings && sharing) service.loadLoginRows(computerId) }
   onVisibleChanged: reload()
-  onComputerIdChanged: { pendingRule = null; reload() }
+  onComputerIdChanged: { pendingRule = null; search.text = ""; filter.value = "all"; reload() }
   onSharingChanged: reload()
-  function focusDefault() { refreshButton.forceActiveFocus() }
+  function focusDefault() { search.focusInput() }
+  property alias searchText: search.text
+  function focusSearch() { search.focusInput() }
+  function findSite(site) { filter.value = "all"; search.text = site }
+  readonly property var filteredRows: rows.filter(function(row) { return row.site.indexOf(search.text.trim().toLowerCase()) !== -1 && (filter.value === "all" || row.rule === filter.value) })
   // The keyboard stays put while a menu or confirmation is open here: reading again would rebuild the rows.
   property int menusOpen: 0
   Timer {
@@ -88,20 +92,20 @@ Item {
     }
   }
 
-  Flickable {
-    id: scroll
-    anchors.fill: parent
-    clip: true
-    contentWidth: width
-    contentHeight: column.implicitHeight
-    boundsBehavior: Flickable.StopAtBounds
-    flickableDirection: Flickable.VerticalFlick
-    Column {
-      id: column
-      width: Math.min(scroll.width, root.tokens.columnMax)
-      spacing: Style.space(6)
+  Column {
+    id: column
+    width: parent.width
+    spacing: Style.space(6)
       Row {
+        width: parent.width
         spacing: Style.space(10)
+        FieldInput { id: search; width: Style.space(320); placeholder: "Find a site"; accessibleName: "Find a login site" }
+        ButtonGroup {
+          id: filter
+          options: [{value: "all", label: "All"}, {value: "allow", label: "Allowed"}, {value: "ask", label: "Ask First"}, {value: "deny", label: "Denied"}]
+          value: "all"
+          onChanged: value => filter.value = value
+        }
         ActionButton {
           id: refreshButton
           label: "Refresh"
@@ -126,25 +130,34 @@ Item {
       }
       ActionButton {
         visible: !!root.settings && !root.sharing && !root.elsewhere && !!root.host
-        label: "Open Settings"
+        label: "Manage Logins"
         size: "small"
-        onClicked: root.host.showSettings()
+        onClicked: root.host.showLogins()
       }
 
-      Repeater {
-        model: root.standingText ? [] : root.rows
-        delegate: Rectangle {
+  }
+  ListView {
+    id: list
+    y: column.height + Style.space(8)
+    width: parent.width
+    height: parent.height - y
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    model: root.standingText ? [] : root.filteredRows
+    delegate: Rectangle {
           id: row
           required property var modelData
           readonly property var entry: modelData
+          property bool detailsOpen: false
           readonly property bool neverShared: entry.allRule === "deny"
           readonly property bool focusInside: menu.opened || shareWith.opened || removeButton.activeFocus
-          width: column.width
-          height: Math.max(Style.space(48), info.implicitHeight + Style.space(14))
+          width: list.width
+          height: Math.max(Style.space(40), info.implicitHeight + Style.space(10))
           radius: 0
           color: focusInside ? Qt.alpha(Color.accent, 0.08) : rowHover.hovered ? Qt.alpha(Color.popups.text, 0.05) : "transparent"
           Accessible.role: Accessible.StaticText
           Accessible.name: entry.site + ", " + root.ruleWord(entry.rule)
+          Component.onDestruction: { if (menu.opened) root.menusOpen--; if (shareWith.opened) root.menusOpen-- }
           HoverHandler { id: rowHover }
           Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; radius: 0; color: root.tokens.rule }
 
@@ -154,19 +167,19 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: buttons.x - x - Style.space(10)
             spacing: Style.space(2)
-            Copy { width: parent.width; text: row.entry.site; font.bold: true; wrapMode: Text.NoWrap; elide: Text.ElideRight }
+            Copy { width: parent.width; text: row.entry.site + " · " + (row.entry.allRule && !row.entry.ownRule ? "All Computers" : root.computerLabel); font.bold: true; wrapMode: Text.NoWrap; elide: Text.ElideRight }
             Copy {
               width: parent.width
               textFormat: Text.StyledText
               text: row.neverShared ? root.tokens.ink("Never shared: ", root.tokens.dim) + root.tokens.ink("Denied", root.tokens.textTint(root.tokens.attentionColor)) + root.tokens.ink(" for All Computers", root.tokens.dim)
                 : !row.entry.ownRule && row.entry.allRule ? root.tokens.ink(root.ruleWord(row.entry.allRule), root.tokens.textTint(root.tokens.ruleColor(row.entry.allRule))) + root.tokens.ink(" for All Computers", root.tokens.dim) : ""
-              visible: text !== ""
+              visible: row.detailsOpen && text !== ""
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.NoWrap
               elide: Text.ElideRight
             }
             Copy {
-              visible: row.entry.firstGoal !== ""
+              visible: row.detailsOpen && row.entry.firstGoal !== ""
               width: parent.width
               textFormat: Text.StyledText
               text: root.tokens.ink("First asked for “", root.tokens.dim) + root.tokens.ink(row.entry.firstGoal, root.tokens.foreground) + root.tokens.ink("”", root.tokens.dim)
@@ -176,11 +189,12 @@ Item {
             }
             Copy {
               width: parent.width
+              visible: row.detailsOpen
               readonly property string resultWhen: row.entry.lastResultAt ? " (" + root.tokens.changedLabel(new Date(row.entry.lastResultAt).toISOString(), root.service.nowMs) + ")" : ""
               textFormat: Text.StyledText
               text: root.tokens.ink(row.entry.lastShared ? "Last shared " + root.tokens.changedLabel(new Date(row.entry.lastShared).toISOString(), root.service.nowMs) : "Not shared yet", root.tokens.dim) +
                 (row.entry.lastResult === "worked" ? root.tokens.ink(" · ", root.tokens.dim) + root.tokens.ink("Worked", root.tokens.textTint(root.tokens.readyColor)) + root.tokens.ink(resultWhen, root.tokens.dim)
-                : row.entry.lastResult === "site_rejected" ? root.tokens.ink(" · ", root.tokens.dim) + root.tokens.ink("The site asked to sign in again", root.tokens.textTint(root.tokens.attentionColor)) + root.tokens.ink(resultWhen, root.tokens.dim) + root.tokens.ink(": use Take Control", root.tokens.foreground) : "")
+                : row.entry.lastResult === "site_rejected" ? root.tokens.ink(" · ", root.tokens.dim) + root.tokens.ink("The site asked to sign in again", root.tokens.textTint(root.tokens.attentionColor)) + root.tokens.ink(resultWhen, root.tokens.dim) + root.tokens.ink(": use Join", root.tokens.foreground) : "")
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.NoWrap
               elide: Text.ElideRight
@@ -192,12 +206,19 @@ Item {
             anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(6)
+            ActionButton {
+              label: row.detailsOpen ? "Less" : "Details"
+              size: "small"
+              role: "quiet"
+              Accessible.name: "Details for " + row.entry.site
+              onClicked: row.detailsOpen = !row.detailsOpen
+            }
             RuleMenu {
               id: menu
               anchors.verticalCenter: parent.verticalCenter
               rule: row.entry.rule
               blocked: root.blockedReason !== "" || row.neverShared || !!root.service.busy["login-rule:" + root.computerId + ":" + row.entry.site]
-              disabledReason: root.blockedReason || (row.neverShared ? "Never Share is on for " + row.entry.site + " on every computer. Change it in Settings under Logins." : "")
+              disabledReason: root.blockedReason || (row.neverShared ? "Never Share is on for " + row.entry.site + " on every computer. Change it in the Logins page." : "")
               accessibleName: row.entry.site + " on " + root.computerLabel
               onChosen: function(value) { root.choose(row.entry, value) }
               onOpenedChanged: root.menusOpen += opened ? 1 : -1
@@ -226,16 +247,13 @@ Item {
             }
           }
         }
-      }
-      Copy {
-        visible: !root.standingText && root.deniedAll.length > 0
-        width: parent.width
-        topPadding: Style.space(6)
-        text: "Never shared on any computer: " + StatusModel.listWords(root.deniedAll) + ". Change these in Settings under Logins."
-        color: root.tokens.textTint(root.tokens.attentionColor)
-        font.pixelSize: Style.font.bodySmall
-      }
-      Item { width: 1; height: Style.space(8) }
+    footer: Copy {
+      width: list.width
+      visible: root.deniedAll.length > 0
+      text: root.deniedAll.length + " sites denied for All Computers. Manage them on the Logins page."
+      dimmed: true
+      font.pixelSize: Style.font.bodySmall
     }
+    Copy { visible: list.count === 0 && root.rows.length > 0 && !root.standingText; text: "No sites match."; dimmed: true }
   }
 }

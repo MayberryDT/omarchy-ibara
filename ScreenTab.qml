@@ -335,7 +335,7 @@ Item {
         StateMarker { tokens: root.tokens; fleetState: root.fleetState; anchors.verticalCenter: parent.verticalCenter }
         Copy {
           anchors.verticalCenter: parent.verticalCenter
-          text: root.tokens.stateLabel(root.fleetState, root.computer)
+          text: (root.service ? root.service.turnWords(root.computer.computer_id) : "") || root.tokens.stateLabel(root.fleetState, root.computer)
           color: root.tokens.textTint(root.tokens.stateColor(root.fleetState))
           font.pixelSize: Style.font.bodySmall
         }
@@ -381,6 +381,20 @@ Item {
     x: root.railBeside ? root.width - width : 0
     y: root.railBeside ? 0 : stage.height + root.gap
     width: root.railBeside ? root.railWidth : root.width
+    Copy {
+      readonly property string reason: root.service && root.service.sessions[root.computerId]
+        ? String(root.service.sessions[root.computerId].fallback_reason || "") : ""
+      readonly property string engine: root.service && root.service.sessions[root.computerId]
+        ? String(root.service.sessions[root.computerId].screen_engine || "") : ""
+      visible: engine !== ""
+      width: parent.width
+      height: visible ? implicitHeight + Style.space(10) : 0
+      text: engine === "ibara" ? "Join uses ibara’s stream." : "Join uses Sunshine." + (reason ? " " + reason : "")
+      color: root.tokens.textTint(root.tokens.attentionColor)
+      wrapMode: Text.Wrap
+      maximumLineCount: 3
+      elide: Text.ElideRight
+    }
     Rectangle { width: parent.width; height: 1; radius: 0; color: root.tokens.rule }
 
     RailSection {

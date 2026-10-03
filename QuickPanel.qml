@@ -210,7 +210,7 @@ Panel {
             width: content.width
             sourceComponent: askSlot.entry && askSlot.entry.kind === "approval" ? approvalCard : askSlot.entry && askSlot.entry.kind === "login" ? loginCard : askSlot.entry && askSlot.entry.kind === "question" ? questionCard : unsupportedCard
             Component { id: approvalCard; ApprovalCard { service: root.service; item: askSlot.entry; compact: true; keyHints: askSlot.index === root.headIndex } }
-            Component { id: loginCard; LoginCard { service: root.service; item: askSlot.entry; compact: true; onSettingsWanted: root.summon({ route: "settings" }) } }
+            Component { id: loginCard; LoginCard { service: root.service; item: askSlot.entry; compact: true; onSettingsWanted: root.summon({ route: "logins" }) } }
             Component {
               id: unsupportedCard
               Toast {

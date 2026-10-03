@@ -36,7 +36,7 @@
       {
         "key": "openRefreshSec",
         "type": "integer",
-        "label": "Refresh while open (seconds)",
+        "label": "Refresh While Open (Seconds)",
         "min": 2,
         "max": 60,
         "step": 1,
@@ -45,7 +45,7 @@
       {
         "key": "closedRefreshSec",
         "type": "integer",
-        "label": "Refresh while hidden (seconds)",
+        "label": "Refresh While Hidden (Seconds)",
         "min": 5,
         "max": 120,
         "step": 5,

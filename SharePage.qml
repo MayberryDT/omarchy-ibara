@@ -21,8 +21,8 @@ Item {
   property string lasts: "day"
   readonly property var levels: [
     { key: "watch", label: "Watch", text: "They see this computer's screen. Nothing else." },
-    { key: "use_with_approval", label: "Use with Approval", text: "They see the screen. Files, Take Control and agent tasks each ask you first." },
-    { key: "take_control", label: "Take Control", text: "They see the screen, use files and take control. Agent tasks ask you first." }
+    { key: "use_with_approval", label: "Use with Approval", text: "They see the screen. Files, Join and agent tasks each ask you first." },
+    { key: "take_control", label: "Join", text: "They see the screen, use files and take control. Agent tasks ask you first." }
   ]
   readonly property var durations: [
     { key: "hour", label: "1 Hour" }, { key: "day", label: "1 Day" }, { key: "week", label: "1 Week" }, { key: "never", label: "Until Revoked" }

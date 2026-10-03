@@ -294,6 +294,7 @@ Panel {
     }
     else if (payload.route === "add" || payload.view === "setup") showAdd()
     else if (payload.route === "settings") showSettings()
+    else if (payload.route === "logins") showLogins()
     else if (payload.route === "share") showShare()
     else if (payload.route === "fleet") showFleet()
     else if (service && service.routeSerial !== undefined && service.routeSerial !== seenRouteSerial) applyServiceRoute()
@@ -366,6 +367,12 @@ Panel {
     if (service && typeof service.openFleet === "function") service.openFleet()
     routing = false
     applyRoute("settings", "", "")
+  }
+  function showLogins() {
+    routing = true
+    if (service && typeof service.openFleet === "function") service.openFleet()
+    routing = false
+    applyRoute("logins", "", "")
   }
   function applyServiceRoute() {
     if (!service) return
@@ -747,6 +754,7 @@ Panel {
       if (confirmation) cancelConfirm()
       else if (connectOpen) closeConnect()
       else if (toastStack && toastStack.dismissNewest()) {}
+      else if (route === "logins") showSettings()
       else if (route !== "fleet") showFleet()
       else requestClose()
       event.accepted = true
@@ -803,7 +811,7 @@ Panel {
     sourceComponent: Component {
   FloatingWindow {
     id: panel
-    readonly property Item activeRoute: root.route === "computer" ? computerRoute.item : root.route === "add" ? addRoute.item : root.route === "settings" ? settingsRoute.item : root.route === "share" ? shareRoute.item : fleetRoute.item
+    readonly property Item activeRoute: root.route === "computer" ? computerRoute.item : root.route === "add" ? addRoute.item : root.route === "settings" ? settingsRoute.item : root.route === "logins" ? loginsRoute.item : root.route === "share" ? shareRoute.item : fleetRoute.item
     readonly property var focusedItem: keyboardSurface.Window.activeFocusItem
     readonly property Item toastStack: toasts
     function activateConsole() { if (keyboardSurface.Window.window) keyboardSurface.Window.window.requestActivate() }
@@ -885,6 +893,13 @@ Panel {
             service: root.service
           }
         }
+      }
+
+      RoutePage {
+        id: loginsRoute
+        page: "logins"
+        current: root.route
+        sourceComponent: Component { LoginsPage { host: root; service: root.service } }
       }
 
       // Every message, over the page's bottom-right corner under its header; the page never

@@ -516,7 +516,7 @@ Item {
         readonly property bool current: grid.currentIndex === index
         readonly property bool actionsFocused: actionsLoader.activeFocus
         readonly property bool focused: (current && grid.activeFocus) || actionsFocused
-        // A confirmation from this card's Take Control or its menu keeps the button it is attached to.
+        // A confirmation from this card's Join or its menu keeps the button it is attached to.
         readonly property bool confirming: !!root.host && !!root.host.confirmation && root.host.confirmation.subject === computerId
         // Set by the menu itself as it opens and closes: the loader that holds it depends on this,
         // so reading it through the loader would be a binding loop.
@@ -526,7 +526,7 @@ Item {
         readonly property bool holding: !!root.host && root.host.holds(computerId)
         readonly property bool connecting: !!root.service && root.service.connectingOn(computerId)
         readonly property bool viewerOpen: holding && root.host.viewerOpen(computerId)
-        // T, V or H (Console.handleKey) on the card with the keyboard: its Take Control, Open or
+        // T, V or H (Console.handleKey) on the card with the keyboard: its Join, Open or
         // Close Viewer, or Hand Back, as if chosen there.
         function pressControl(control) { return focused && !!actionsLoader.item && actionsLoader.item.press(control) }
         // The one thing this card offers without hovering: Fix It for a repair ibara couldn't
@@ -642,7 +642,7 @@ Item {
                 StateMarker { tokens: root.tokens; fleetState: cell.shownState; anchors.verticalCenter: parent.verticalCenter }
                 Copy {
                   anchors.verticalCenter: parent.verticalCenter
-                  text: cell.connecting ? "Connecting…" : root.tokens.stateLabel(cell.shownState, cell.computer) + (cell.computer.version ? " · ibara " + cell.computer.version : "")
+                  text: cell.connecting ? "Connecting…" : ((root.service ? root.service.turnWords(cell.computerId) : "") || root.tokens.stateLabel(cell.shownState, cell.computer)) + (cell.computer.version ? " · ibara " + cell.computer.version : "")
                   color: root.tokens.textTint(root.tokens.stateColor(cell.shownState))
                   font.pixelSize: Style.font.bodySmall
                 }
@@ -730,10 +730,10 @@ Item {
                     focus: !cell.holding
                     // Why it is unavailable is a toast when chosen, never a tooltip over the cards.
                     tooltipText: ""
-                    Accessible.name: "Take Control " + root.tokens.label(cell.computer)
+                    Accessible.name: "Join " + root.tokens.label(cell.computer)
                   }
                   // While you hold control: Open Viewer (Close Viewer while it is open), then Hand
-                  // Back in Take Control's place.
+                  // Back in Join's place.
                   ActionButton {
                     id: viewerButton
                     visible: cell.holding && !cell.connecting && (cell.viewerOpen || StatusModel.computerState(cell.computer) !== "offline")
