@@ -609,8 +609,11 @@ Panel {
     if (c && c.paused === true && c.pause_origin === "person") return "A person paused agents on " + tokens.label(c) + ". Resume Agents before updating."
     if (c && (c.active_task_ref || owner.indexOf("agent:") === 0)) return "An agent is working on " + tokens.label(c) + "."
     if (action !== "update_omarchy" && service.latestRelease && service.latestRelease.version) {
-      // Older computers may not report a version. Their plain update still works.
-      if (c.version && !service.behind(c)) return "ibara is already current (" + c.version + ")."
+      var installed = String(c.version || ""), available = String(service.latestRelease.version)
+      if (installed.indexOf("-dev.") !== -1) return "A development build is installed (" + installed + "). Use its release procedure to replace it."
+      // Unknown/legacy identities retain an explicit update; only comparable packages prove currency.
+      var packaged = /^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$/
+      if (packaged.test(installed) && packaged.test(available) && StatusModel.versionCompare(installed, available) >= 0) return "ibara is already current (" + installed + ")."
     }
     return ""
   }

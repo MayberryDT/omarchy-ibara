@@ -162,6 +162,9 @@ Item {
     return { task_ref: taskRef, title: StatusModel.clip(value.title, 160),
       principal: /^[A-Za-z0-9_.:-]{1,64}$/.test(String(value.principal || "")) ? String(value.principal) : "",
       state: /^[a-z_]{1,32}$/.test(String(value.state || "")) ? String(value.state) : "",
+      connection: ["connected", "disconnected"].indexOf(String(value.connection || "")) >= 0 ? String(value.connection) : "",
+      active_jobs: typeof value.active_jobs === "number" && isFinite(value.active_jobs) ? Math.max(0, Math.floor(value.active_jobs)) : 0,
+      uncertain_jobs: typeof value.uncertain_jobs === "number" && isFinite(value.uncertain_jobs) ? Math.max(0, Math.floor(value.uncertain_jobs)) : 0,
       started_at: /^\d{4}-\d\d-\d\dT/.test(started) && isFinite(StatusModel.isoMs(started)) ? started : "",
       last_step: step && typeof step.summary === "string" && step.summary.trim() ? { summary: StatusModel.clip(step.summary.trim(), 80), at: String(step.at || "") } : null,
       last_point: point && px >= 0 && px <= 1 && py >= 0 && py <= 1 && typeof point.at === "string" && point.at ? { x: px, y: py, at: point.at } : null }
@@ -1062,7 +1065,7 @@ Item {
   readonly property var requestItems: approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
   readonly property var popupRequests: !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
     ? requestItems.filter(function(item) {
-        return !root.hiddenRequestPopups[item.ref] && root.requestKindEnabled(item.kind) && (item.kind !== "login" || !root.loginSourceElsewhere(item))
+        return !root.hiddenRequestPopups[item.ref] && root.requestKindEnabled(item.kind) && (item.kind !== "login" || (root.loginNeedsNotification(item) && (item.login.assistance || !root.loginSourceElsewhere(item))))
       }) : []
   function requestKindEnabled(kind) { return requestBool(kind === "approval" ? "popup_approvals" : kind === "login" ? "popup_logins" : "popup_questions") }
   // Ordinary bar-widget plugins do not receive the first-party service proxy on stock
@@ -1166,8 +1169,8 @@ Item {
     onLoaded: { try { root.loadedPluginVersion = String(JSON.parse(text()).version || "") } catch (e) {} }
   }
   function restartBar() { Quickshell.execDetached(["omarchy", "restart", "shell"]) }
-  readonly property string updateAvailable: latestRelease && latestRelease.version && StatusModel.versionCompare(latestRelease.version, latestRelease.console_version) > 0 ? String(latestRelease.version) : ""
-  function behind(c) { return !!(c && c.version && latestRelease && latestRelease.version && StatusModel.versionCompare(c.version, latestRelease.version) < 0) }
+  readonly property string updateAvailable: latestRelease && StatusModel.releaseBehind(latestRelease.console_version, latestRelease.version) ? String(latestRelease.version) : ""
+  function behind(c) { return !!(c && latestRelease && StatusModel.releaseBehind(c.version, latestRelease.version)) }
   function loadUpdateCheck(refresh) { if (!busy["update-check"]) { setBusy("update-check", "reading"); sideSend(refresh ? ["update-check", "--refresh"] : ["update-check"], { busyKey: "update-check" }) } }
   property var seenIbaraUpdates: ({})
   function noteIbaraUpdate(id, before, after) {
@@ -1363,6 +1366,19 @@ Item {
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
     return value === undefined || value === null ? fallback : value
+  }
+
+  function saveFleetOrder(mode, ids) {
+    if ((mode !== "name" && mode !== "attention") || !Array.isArray(ids) || !shell) return false
+    if (setting("fleet_sort", "name") === mode && JSON.stringify(setting("fleet_order", [])) === JSON.stringify(ids)) return true
+    var next = Object.assign({}, settings, { fleet_sort: mode, fleet_order: ids })
+    if (!shell.updateEntryInline("io.zet.ibara", next)) {
+      actionError = "ibara couldn't save the computer order."
+      return false
+    }
+    // This changes presentation only; do not tear down preview lanes.
+    settings = next
+    return true
   }
 
   function intSetting(name, fallback, minimum, maximum) {
@@ -2968,6 +2984,9 @@ Item {
   // which prints the notification's id, then the action chosen.
   property var approvalNotices: ({})
   property var noticedApprovals: ({})
+  function loginNeedsNotification(item) {
+    return !item || !item.login || !item.login.assistance || item.login.assistance.notification !== "quiet"
+  }
   function desktopRequestEnabled(kind) {
     return !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd")) && requestKindEnabled(kind) &&
       (!requestBool("request_popups") || requestBool("popup_desktop_notifications"))
@@ -3032,6 +3051,11 @@ Item {
       notice.answered = true
       if (!answerQuestion(notice.ref, notice.options[index]) && !consoleOpen)
         queueNotice({ title: "ibara", body: "That question on " + notice.label + " could not be answered. Open the ibara console to check whether it is still waiting." })
+    } else if (notice.login && text === "defer") {
+      notice.answered = true
+      var deferred = loginByRef(notice.ref)
+      if (deferred && deferred.login.assistance) answerLoginAssistance(notice.ref,
+        StatusModel.loginDecisions(notice.loginSites, {}, "defer"), notice.loginRevision)
     } else if (notice.login && (text === "share" || text === "share_all" || text === "decline")) {
       notice.answered = true
       var item = loginByRef(notice.ref)
@@ -3053,7 +3077,7 @@ Item {
     for (var ref in approvalNotices) {
       var notice = approvalNotices[ref]
       var kind = notice.question ? "question" : notice.login ? "login" : "approval"
-      var pending = requestItems.some(function(item) { return item.ref === ref })
+      var pending = requestItems.some(function(item) { return item.ref === ref && (item.kind !== "login" || root.loginNeedsNotification(item)) })
       if (notice.answered || !notice.noticeId || (pending && desktopRequestEnabled(kind))) continue
       notice.answered = true
       if (pending) delete seen[ref] // Settings/focus/DND may allow a new notification later.
@@ -3063,7 +3087,7 @@ Item {
     }
     requestItems.forEach(function(item) { if (!desktopRequestEnabled(item.kind)) delete seen[item.ref] })
     var pendingSeen = ({})
-    requestItems.forEach(function(item) { if (seen[item.ref]) pendingSeen[item.ref] = true })
+    requestItems.forEach(function(item) { if (seen[item.ref]) pendingSeen[item.ref] = seen[item.ref] })
     noticedApprovals = pendingSeen
   }
 
@@ -3174,12 +3198,20 @@ Item {
   }
   // Share, Share With All Computers, Don't Share or Never Share, per site (StatusModel.loginDecisions).
   // `retry` shares again the sites the person wasn't signed in to.
-  function answerLogin(ref, decisions, retry, fromNotice) {
+  function answerLogin(ref, decisions, retry, fromNotice, revision) {
     var item = loginByRef(ref)
     if (!item || busy["answer:" + ref]) return false
     if (item.unreachable) { actionNotice = (item.label || computerLabelFor(item.computer_id)) + " isn't answering right now. You can answer once it's back."; return false }
-    sendLogin(["login-answer", "--computer", item.computer_id, "--att", ref, "--decisions", JSON.stringify(decisions)].concat(retry === true ? ["--retry"] : []),
+    sendLogin(["login-answer", "--computer", item.computer_id, "--att", ref, "--decisions", JSON.stringify(decisions)].concat(retry === true ? ["--retry"] : []).concat(revision !== undefined ? ["--revision", String(revision)] : []),
       { busyKey: "answer:" + ref, ref: ref, decisions: decisions, loginComputer: item.computer_id, label: item.label || computerLabelFor(item.computer_id), fromNotice: fromNotice === true })
+    return true
+  }
+  function answerLoginAssistance(ref, decisions, revision) {
+    var item = loginByRef(ref)
+    if (!item || !item.login.assistance || item.login.assistance.version !== 1 || busy["answer:" + ref]) return false
+    if (item.unreachable) { actionError = "That computer is not answering right now."; return false }
+    sendLogin(["login-assist", "--computer", item.computer_id, "--att", ref, "--revision", String(revision), "--decisions", JSON.stringify(decisions)],
+      { busyKey: "answer:" + ref, ref: ref, decisions: decisions, loginComputer: item.computer_id })
     return true
   }
   function sendLogin(args, route) {
@@ -3272,6 +3304,10 @@ Item {
       if (route.loginComputer !== loginRowsComputerId) return
       loginRowsError = error ? (plain || "ibara couldn't read this computer's logins.") : ""
       if (!error) { var rows = StatusModel.loginRowsView(data); if (!sameValue(loginRows, rows)) loginRows = rows; loginRowsAt = Date.now() }
+    } else if (op === "login-assist") {
+      if (error) { reportError(plain || "The request changed. Refresh and choose again.", "", ""); loadAttention(); return }
+      actionNotice = data.continuation === "ready_to_resume" ? "Your answer is saved. Ready when the agent resumes." : "Your answer is saved."
+      loadAttention()
     } else if (op === "login-answer") {
       var name = route.label
       if (error) {
@@ -3340,23 +3376,22 @@ Item {
   // Don't Share (for every site it names). While no computer shares, it says where to turn
   // sharing on; where another computer shares, it asks there, not here.
   function notifyLogins() {
-    if (!desktopRequestEnabled("login") || !loginSettings) return
+    if (!desktopRequestEnabled("login")) return
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < logins.length; i++) {
       var item = logins[i]
-      if (seen[item.ref]) continue
-      seen[item.ref] = true
-      fresh = true
-      if (loginSourceElsewhere(item)) { delete seen[item.ref]; continue }
+      var noticeKey = item.login.assistance ? "login:" + item.login.assistance.revision : true
+      if (seen[item.ref] === noticeKey || !loginNeedsNotification(item)) continue
+      if (!item.login.assistance && loginSourceElsewhere(item)) continue
+      seen[item.ref] = noticeKey; fresh = true
       var name = item.label || computerLabelFor(item.computer_id)
-      var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name, login: true })
-      var sites = item.login.sites.map(function(s) { return s.site }).join(", ")
-      var actions = loginSettings.enabled ? ["-A", "share=Share", "-A", "share_all=Share With All Computers", "-A", "decline=Don't Share"] : ["-A", "open=Open Console"]
-      var body = StatusModel.requestNoticeBody(item, name, sessions[item.computer_id], "Use your logins for " + sites)
-        + (loginSettings.enabled ? "" : "\nLogin sharing is off. Open Console to turn it on.")
-      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "normal", "-t", "15000", "-A", "default=Open"].concat(actions, ["--", name + " needs your approval", body])
-      notice.running = true
-      notices[item.ref] = notice
+      var notice = approvalNoticeComponent.createObject(root, { ref: item.ref, computerId: item.computer_id, label: name, login: true,
+        loginRevision: item.login.assistance ? item.login.assistance.revision : -1, loginSites: item.login.sites })
+      // Sharing/signup scope is reviewed on the card, never a truncated notification.
+      var actions = item.login.assistance ? ["-A", "defer=Not now", "-A", "open=Options and details"] : ["-A", "open=Open request"]
+      notice.command = ["notify-send", "-a", "ibara", "-p", "-u", "normal", "-t", "15000", "-A", "default=Open"].concat(actions,
+        ["--", "Sign-in needed", item.login.sites.map(function(s){return s.site}).join(", ") + " · " + name])
+      notice.running = true; notices[item.ref] = notice
     }
     if (fresh) { noticedApprovals = seen; approvalNotices = notices }
   }
@@ -4638,6 +4673,8 @@ Item {
       property string computerId: ""
       // A login request's notification answers Share or Don't Share.
       property bool login: false
+      property int loginRevision: -1
+      property var loginSites: []
       property bool question: false
       property var options: []
       property string label: ""

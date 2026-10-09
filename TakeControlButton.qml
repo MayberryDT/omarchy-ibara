@@ -7,9 +7,11 @@ ActionButton {
   property var host: null
   property string computerId: ""
   property string keyHint: ""
+  property string actionLabel: "Join"
   property var confirmation: null
+  signal joinRequested()
   readonly property bool connecting: !!service && service.connectingOn(computerId)
-  label: connecting ? "Connecting…" : "Join" + keyHint
+  label: connecting ? "Connecting…" : actionLabel + keyHint
   role: "primary"
   blocked: !service || service.controlBlockedReason(computerId) !== ""
   disabledReason: service ? service.controlBlockedReason(computerId) : "This computer is not available."
@@ -18,11 +20,12 @@ ActionButton {
   onActiveFocusChanged: if (activeFocus && service) service.warmComputer(computerId)
   onClicked: {
     if (!service || connecting) return
-    service.requestTakeControl(computerId, function(options) {
+    var accepted = service.requestTakeControl(computerId, function(options) {
       if (root.host && typeof root.host.askConfirm === "function") { root.host.askConfirm(Object.assign({}, options, { anchor: root })); return }
       if (root.confirmation) { root.cancelConfirm(); return }
       root.confirmation = Object.assign({}, options, { anchor: root })
     })
+    if (accepted) root.joinRequested()
   }
   function cancelConfirm() { confirmation = null; forceActiveFocus() }
   function runConfirm() {

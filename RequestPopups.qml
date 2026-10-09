@@ -19,9 +19,15 @@ PanelWindow {
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
   color: "transparent"
   implicitWidth: Math.min(Style.space(520), screen ? screen.width - Style.space(24) : Style.space(520))
-  implicitHeight: stack.implicitHeight
+  implicitHeight: Math.min(stack.implicitHeight, screen ? screen.height - Style.space(80) : Style.space(600))
 
-  Column {
+  Flickable {
+    anchors.fill: parent
+    clip: true
+    contentWidth: width
+    contentHeight: stack.implicitHeight
+    boundsBehavior: Flickable.StopAtBounds
+   Column {
     id: stack
     width: parent.width
     spacing: Style.space(8)
@@ -55,8 +61,11 @@ PanelWindow {
             item: slot.request
             popup: true
             compact: true
-            dismissName: "Later · Keep this login request in the console"
-            onDismissed: root.service.hideRequestPopup(item.ref)
+            dismissName: "Not now · Keep this login request for later"
+            onDismissed: {
+              if (canAssist) assist("defer")
+              else root.service.hideRequestPopup(item.ref)
+            }
             onBodyClicked: root.service.openRequest(item)
             onSettingsWanted: root.service.openRequestSettings()
           }
@@ -81,5 +90,6 @@ PanelWindow {
       label: "+" + (root.requests.length - 3) + " More"
       onClicked: root.service.openRequest(root.requests[3])
     }
+  }
   }
 }

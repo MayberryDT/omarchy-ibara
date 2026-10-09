@@ -666,6 +666,11 @@ function activityLine(session, nowMs) {
   var omarchy = asObject(session.omarchy_update)
   if (omarchy.state === "running") return "Updating Omarchy…"
   if (omarchy.state === "done" && restartNeeded(session)) return "Updated · restart to finish"
+  var jobs = Math.max(0, Number(task.active_jobs) || 0)
+  var uncertain = Math.min(jobs, Math.max(0, Number(task.uncertain_jobs) || 0))
+  if (state === "working" && jobs > 0) return (title || "Work") + " · " + (jobs - uncertain) + " running" +
+    (uncertain ? " · " + uncertain + " awaiting process confirmation" : "") +
+    (task.connection === "disconnected" ? " · agent disconnected; work retained" : "") + age
   if (title) return title + age
   var actor = fleetActor(session)
   if (state === "human") return actor === "you" ? "You have control" : "Controlled by " + actor
@@ -731,7 +736,7 @@ function timeMs(value) {
 
 // What a computer's self-repair could not fix and a person can (repair.needs_person). Fix It runs
 // `fix`; a value the console doesn't know shows the sentence without the button.
-var REPAIR_FIXES = ["reconnect_display", "restart_viewer", "restart_ibara"]
+var REPAIR_FIXES = ["retry_cleanup", "reconnect_display", "restart_viewer", "restart_ibara"]
 function needsPersonView(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   var fix = REPAIR_FIXES.indexOf(value.fix) !== -1 ? String(value.fix) : ""
@@ -741,13 +746,13 @@ function needsPersonView(value) {
 }
 // What Fix It does, for its tooltip.
 function fixDescription(fix) {
-  return ({ reconnect_display: "Add its screen again", restart_viewer: "Restart screen sharing there", restart_ibara: "Restart ibara there" })[fix] || ""
+  return ({ retry_cleanup: "Retry cleanup there", reconnect_display: "Add its screen again", restart_viewer: "Restart screen sharing there", restart_ibara: "Restart ibara there" })[fix] || ""
 }
 // An error with a known fix offers Fix It beside its message. Errors arrive as a code and a
 // message that often starts with the core's own code ("CONTROL_UNSETTLED: …").
 function fixForError(code, message) {
   var text = String(code || "") + " " + String(message || "")
-  if (/CONTROL_UNSETTLED|work (is )?unsettled|hand ?back (did not|didn't) finish/i.test(text)) return "restart_ibara"
+  if (/CONTROL_UNSETTLED|work (is )?unsettled|hand ?back (did not|didn't) finish/i.test(text)) return "retry_cleanup"
   if (/viewer[^.]*(not ready|unavailable|faulted|failed|stopped)|screen sharing[^.]*(stopped|failed|unavailable)/i.test(text)) return "restart_viewer"
   if (/no display|display[^.]*(missing|unavailable|disappeared)|lost its screen/i.test(text)) return "reconnect_display"
   return ""
@@ -763,6 +768,12 @@ function wakeView(value) {
 
 // Omarchy's own update there (operator-status `omarchy_update`): the last or current run, or null.
 // finished_at is epoch ms (0 while it runs); message says why a failed one failed.
+// Only packaged versions participate in the stable release counter. Development
+// and legacy unqualified identities are not evidence of an outdated package.
+function releaseBehind(installed, available) {
+  var packaged = /^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$/
+  return packaged.test(String(installed || "")) && packaged.test(String(available || "")) && versionCompare(installed, available) < 0
+}
 function versionCompare(a, b) {
   var left = String(a || "").match(/[0-9]+|[a-zA-Z]+/g) || [], right = String(b || "").match(/[0-9]+|[a-zA-Z]+/g) || []
   for (var i = 0; i < Math.max(left.length, right.length); i++) {
@@ -845,12 +856,13 @@ function loginRequestView(details) {
     if (!site || seen[site]) continue
     seen[site] = true
     var via = loginSite(entry.via)
-    sites.push({ site: site, via: via !== site ? via : "" })
+    sites.push({ site: site, via: via !== site ? via : "", state: clip(entry.state, 40), method: clip(entry.method, 40) })
   }
   if (!sites.length) return null
   var agent = typeof d.agent === "string" && /^[a-z0-9@_.-]{1,100}$/.test(d.agent) ? d.agent : ""
   return { agent: agent, principal: clip(d.principal, 100), taskRef: requestId(task.task_ref) ? String(task.task_ref) : "", goal: clip(task.goal, 200),
-    sites: sites, page: clip(d.page, 300), own: d.own === true, sourceLabel: clip(d.source_label, 128) }
+    sites: sites, page: clip(d.page, 300), own: d.own === true, sourceLabel: clip(d.source_label, 128),
+    assistance: d.assistance && d.assistance.version === 1 ? d.assistance : null }
 }
 // Two-site sign-ins, as a person reads them: "irs.gov signs in through id.me".
 function loginThrough(sites) {
@@ -897,7 +909,7 @@ function loginBrowserName(settings, browser) {
 function loginDecisions(sites, unticked, choice) {
   var out = {}, off = unticked && typeof unticked === "object" ? unticked : {}
   var list = Array.isArray(sites) ? sites : []
-  for (var i = 0; i < list.length; i++) out[list[i].site] = choice !== "decline" && !off[list[i].site] ? choice : "decline"
+  for (var i = 0; i < list.length; i++) if (!off[list[i].site]) out[list[i].site] = choice
   return out
 }
 // What the person reads once an answer went (`login-answer` → sites: [{site, outcome}]):
@@ -1355,7 +1367,8 @@ function standingToasts(state) {
     if (requests[j] && requests[j].request_id) out.push({ key: "pair:" + requests[j].request_id, kind: "pair", ref: String(requests[j].request_id), tone: "request" })
   var needs = Array.isArray(s.needs) ? s.needs : []
   for (var n = 0; n < needs.length; n++)
-    if (needs[n] && needs[n].computer_id) out.push({ key: "need:" + needs[n].computer_id, kind: "need", ref: String(needs[n].computer_id), tone: "error" })
+    // Machine repair remains on the fleet card and status badge, never a repeated overlay.
+    if (needs[n] && needs[n].kind !== "repair" && needs[n].computer_id) out.push({ key: "need:" + needs[n].computer_id, kind: "need", ref: String(needs[n].computer_id), tone: "error" })
   var problems = Array.isArray(s.problems) ? s.problems : []
   for (var p = 0; p < problems.length; p++)
     if (problems[p] && problems[p].computer_id) out.push({ key: "problem:" + problems[p].computer_id, kind: "problem", ref: String(problems[p].computer_id), tone: "error" })

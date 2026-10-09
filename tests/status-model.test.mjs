@@ -522,7 +522,7 @@ test('a login request lists each site once, with the site it signs in through, a
     summary: 'codex@relay, working on “File Q3 estimated tax” on Birch, wants your logins for 3 sites',
     details: { agent: 'codex@relay', task: { task_ref: 'task_1', goal: 'File Q3 estimated tax' }, sites, page: 'https://sa.www4.irs.gov/ola/', own: true, source_label: 'Studio', ...extra } }] });
   const [login] = M.attentionView(item([{ site: 'IRS.gov', via: 'id.me' }, { site: 'id.me', via: 'id.me' }, { site: 'irs.gov' }, { site: 'https://evil.example/x' }, { site: 'oktap.tax.ok.gov' }]));
-  assert.deepEqual(JSON.parse(JSON.stringify(login.login.sites)), [{ site: 'irs.gov', via: 'id.me' }, { site: 'id.me', via: '' }, { site: 'oktap.tax.ok.gov', via: '' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(login.login.sites)), [{ site: 'irs.gov', via: 'id.me', state: '', method: '' }, { site: 'id.me', via: '', state: '', method: '' }, { site: 'oktap.tax.ok.gov', via: '', state: '', method: '' }]);
   assert.equal(login.agent, 'codex@relay');
   assert.equal(M.attentionView(item([{ site: 'not a site' }])).length, 0);
   assert.equal(M.needsYouView([login], [], {}).length, 0);
@@ -536,9 +536,9 @@ test('a login request lists each site once, with the site it signs in through, a
 // Share leaves a ticked site shared.
 test('an answer gives the ticked sites the choice and every other site Don\'t Share', () => {
   const sites = [{ site: 'irs.gov' }, { site: 'id.me' }, { site: 'oktap.tax.ok.gov' }];
-  assert.deepEqual({ ...M.loginDecisions(sites, { 'id.me': true }, 'share_all') }, { 'irs.gov': 'share_all', 'id.me': 'decline', 'oktap.tax.ok.gov': 'share_all' });
+  assert.deepEqual({ ...M.loginDecisions(sites, { 'id.me': true }, 'share_all') }, { 'irs.gov': 'share_all', 'oktap.tax.ok.gov': 'share_all' });
   assert.deepEqual({ ...M.loginDecisions(sites, {}, 'decline') }, { 'irs.gov': 'decline', 'id.me': 'decline', 'oktap.tax.ok.gov': 'decline' });
-  assert.deepEqual({ ...M.loginDecisions(sites, { 'irs.gov': true }, 'never') }, { 'irs.gov': 'decline', 'id.me': 'never', 'oktap.tax.ok.gov': 'never' });
+  assert.deepEqual({ ...M.loginDecisions(sites, { 'irs.gov': true }, 'never') }, { 'id.me': 'never', 'oktap.tax.ok.gov': 'never' });
 });
 
 // What each outcome of an answer leaves. Failure cases: a signed-out site is reported as shared

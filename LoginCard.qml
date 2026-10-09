@@ -2,149 +2,104 @@ import QtQuick
 import qs.Commons
 import "StatusModel.js" as StatusModel
 
-// An agent asking for your login to one or more sites, as a toast in the console's stack and in
-// the quick panel: who asks, on which computer, for which task and which sites, with a tick for
-// each site when there are several. Share allows the ticked sites on that computer, Share With All
-// Computers allows them on every computer, and Don't Share refuses this time without a rule; the
-// sites left unticked are not shared. Details has the page, whether a site signs in through another
-// (irs.gov through id.me), and Never Share, which denies the ticked sites on every computer. It is
-// answered only on the computer your logins come from: elsewhere it says where, and while no
-// computer shares it offers Turn On Login Sharing. A site you're signed out of in your browser
-// keeps the request open with Retry.
+// One login request, with human intent kept separate from sharing rules.
 Toast {
   id: root
   property var service: null
-  // An attention item of kind `login` (StatusModel.attentionView), whose `login` holds its details.
   property var item: null
-  readonly property Tokens tokens: Tokens {}
   property bool compact: false
-  // Turn On Login Sharing with more than one browser to choose from goes to Settings.
+  property var host: null
   signal settingsWanted()
-
+  readonly property Tokens tokens: Tokens {}
   readonly property var login: item && item.login ? item.login : null
   readonly property var sites: login ? login.sites : []
-  readonly property bool several: sites.length > 1
+  readonly property var assistance: login && login.assistance ? login.assistance : null
+  readonly property bool canAssist: !!assistance && assistance.version === 1
+  readonly property var signup: assistance && assistance.signup ? assistance.signup : null
+  readonly property bool proposed: !!signup && signup.state === "proposed"
   readonly property string ref: item ? String(item.ref) : ""
   readonly property string computerId: item ? String(item.computer_id || "") : ""
-  property bool warmed: false
-  function warm() { if (visible && !warmed && service && computerId) warmed = service.warmComputer(computerId) }
-  Component.onCompleted: warm()
-  onServiceChanged: { warmed = false; warm() }
-  onVisibleChanged: { warmed = false; warm() }
-  onComputerIdChanged: { warmed = false; warm() }
-  Connections {
-    target: root.service
-    function onSessionsChanged() { root.warm() }
-  }
-  readonly property string name: item ? String(item.label || (service ? service.computerLabelFor(item.computer_id) : "")) : ""
+  readonly property string name: item ? String(item.label || (service ? service.computerLabelFor(computerId) : "")) : ""
   readonly property var settings: service ? service.loginSettings : null
   readonly property string browser: service ? service.loginBrowserName : "your browser"
   readonly property string elsewhere: service && item ? service.loginSourceElsewhere(item) : ""
   readonly property var outcome: service && service.loginOutcomes[ref] ? service.loginOutcomes[ref] : null
   readonly property bool answering: !!service && !!service.busy["answer:" + ref]
   readonly property bool unreachable: !!item && item.unreachable === true
-  // What the card offers: "older" (this ibara can't share logins), "elsewhere" (another computer
-  // answers), "off" (no computer shares), "signedOut" (Retry) or "answer".
-  readonly property string mode: !settings ? "older" : elsewhere ? "elsewhere" : !settings.enabled ? "off" : outcome && outcome.signedOut.length ? "signedOut" : "answer"
-  // Sites the person unticked, by name.
+  readonly property string busyReason: answering ? "ibara is sending your answer." : unreachable ? name + " is not answering right now." : ""
   property var unticked: ({})
-  readonly property int tickedCount: sites.filter(function(s) { return !unticked[s.site] }).length
-  property string chosen: ""
+  function settled(site) { return ["resolved","declined","denied","cancelled"].indexOf(site.state) >= 0 }
+  readonly property var selectedSites: sites.filter(function(s) { return !root.unticked[s.site] && !root.settled(s) })
+  readonly property bool canShare: !!settings && settings.enabled && !elsewhere && selectedSites.length > 0 &&
+    selectedSites.every(function(s) { return s.method !== "independent_session" && (!s.state || ["asking","deferred","deliver","deliver_once","shared","rejected","unknown","verify_session"].indexOf(s.state)>=0) }) && !proposed && !(popup && sites.length > 1)
   property bool detailsOpen: false
-  readonly property string asked: {
-    var at = item ? Number(item.at || 0) : 0
-    if (!at || !service) return ""
-    return "asked " + StatusModel.ageLabel(new Date(at).toISOString(), service.nowMs)
-  }
-  readonly property var through: StatusModel.loginThrough(sites)
+  property bool optionsOpen: false
+  property bool remember: false
+  property string chosen: ""
+  readonly property string explanation: !settings ? "Update ibara on this computer to use the current login choices."
+    : proposed ? "This approval covers only the displayed account setup. It does not enable browser login sharing."
+    : sites.some(function(s){return s.method === "independent_session"}) ? "Sign in separately on this computer. Cookie copying is disabled for this site."
+    : elsewhere ? "Browser logins come from " + elsewhere + ". You can still answer this request or join the target."
+    : !settings.enabled ? "Browser login sharing is off. Join the target to sign in, or choose another route."
+    : outcome && outcome.signedOut && outcome.signedOut.length ? StatusModel.loginSignedOutWords(outcome.signedOut, browser)
+    : "Sharing delivers the selected login. The browser session may remain after this task."
   readonly property var facts: {
     if (!login) return []
-    var out = []
-    if (login.agent) out.push({ label: "Who", value: login.agent + (login.own ? "" : ", from someone else's computer, so it's asked every time") })
-    out.push({ label: "Computer", value: name })
-    if (login.goal) out.push({ label: "Task", value: login.goal })
-    out.push({ label: several ? "Sites" : "Site", value: StatusModel.listWords(sites.map(function(s) { return s.site })) })
-    if (login.page) out.push({ label: "Page", value: login.page })
-    for (var i = 0; i < through.length; i++) out.push({ label: "Note", value: through[i] })
-    return out
+    var rows = [{label:"Agent",value:login.agent},{label:"Computer",value:name},{label:"Task",value:login.goal},
+      {label:"Sites",value:StatusModel.listWords(sites.map(function(s){return s.site}))}]
+    if (login.page) rows.push({label:"Page",value:login.page})
+    if (item && item.at && service) rows.push({label:"Requested",value:StatusModel.ageLabel(new Date(item.at).toISOString(),service.nowMs)})
+    StatusModel.loginThrough(sites).forEach(function(v){rows.push({label:"Sign-in provider",value:v})})
+    rows.push({label:"Login method",value:explanation})
+    if (canAssist) rows.push({label:"Progress",value:assistance.continuation === "ready_to_resume" ? "Ready to resume when the agent returns" : assistance.continuation === "waiting_for_you" ? "Waiting for your answer; the computer is free" : "Request is attached to the current task"})
+    return rows
   }
-  readonly property string turnOnReason: settings && settings.targetRole ? "This computer also runs agents, so it can't share logins yet. Turn on sharing from the computer you use." : ""
-  readonly property string busyReason: answering ? "ibara is sending your answer." : unreachable ? name + " isn't answering right now. You can answer once it's back." : ""
-
-  function answer(choice) {
-    if (!service || !login || answering || unreachable) return
-    if (choice !== "decline" && !tickedCount) return
+  function assist(choice) {
+    if (!canAssist || !service || answering || unreachable || !selectedSites.length) return
+    var decisions = {}
+    selectedSites.forEach(function(s){decisions[s.site]=choice})
+    if (choice === "approve_signup") { decisions = {}; decisions[signup.proposal.site] = choice }
     chosen = choice
-    service.answerLogin(ref, StatusModel.loginDecisions(sites, unticked, choice), false, popup)
+    service.answerLoginAssistance(ref, decisions, assistance.revision)
   }
-  function retry() {
-    if (!service || !outcome || answering) return
-    chosen = "retry"
-    service.answerLogin(ref, outcome.decisions, true)
+  function answer(choice) {
+    if (!service || answering || unreachable || !selectedSites.length) return
+    chosen = choice
+    service.answerLogin(ref, StatusModel.loginDecisions(selectedSites, {}, choice), false, popup, canAssist ? assistance.revision : undefined)
   }
   function toggleSite(site) {
-    var next = Object.assign({}, unticked)
+    var next = Object.assign({},unticked)
     if (next[site]) delete next[site]; else next[site] = true
     unticked = next
   }
-  // With one browser and profile to choose, Turn On Login Sharing turns it on here; with more,
-  // the Logins page has the choice.
-  function turnOn(button) {
-    if (!service || turnOnReason) return
-    var choices = settings.browsers.filter(function(b) { return b.supported }).reduce(function(n, b) { return n + b.profiles.length }, 0)
-    if (choices === 1 && service.loginPick) {
-      if (host && typeof host.turnOnLogins === "function") host.turnOnLogins(button)
-      else service.turnOnLogins(false)
-    } else settingsWanted()
+  function focusApprove() { if (firstControl && firstControl.visible) firstControl.forceActiveFocus() }
+  function closeDetails() {
+    if (!detailsOpen && !optionsOpen) return false
+    detailsOpen = false; optionsOpen = false; return true
   }
-  function toggleDetails() { detailsOpen = !detailsOpen }
-  function closeDetails() { if (!detailsOpen) return false; detailsOpen = false; return true }
-  function focusApprove() { var first = firstControl; if (first && first.visible) first.forceActiveFocus() }
-  onRefChanged: { unticked = ({}); detailsOpen = false }
-  onAnsweringChanged: if (!answering) chosen = ""
-  // The console, when the card is in its stack (Toasts sets it); null in the quick panel.
-  property var host: null
-
-  edge: popup ? tokens.humanColor : Color.urgent
-  tinted: true
+  onRefChanged: { unticked=({}); detailsOpen=false; optionsOpen=false; remember=false }
+  onAnsweringChanged: if (!answering) chosen=""
+  edge: tokens.attentionColor
+  tinted: false
   dismissable: popup
-  holding: detailsOpen
-  firstControl: mode === "answer" ? shareButton : mode === "signedOut" ? retryButton : mode === "off" && !turnOnReason ? turnOnButton : detailsButton
-  Accessible.name: name + " needs your approval: " + (item ? item.summary : "")
+  holding: detailsOpen || optionsOpen
+  firstControl: proposed ? createButton : canShare ? shareButton : joinButton.visible ? joinButton : optionsButton
+  Accessible.name: "Sign-in needed for " + StatusModel.listWords(sites.map(function(s){return s.site})) + " on " + name
 
-  Row {
-    width: parent.width
-    spacing: Style.space(10)
-    Copy {
-      id: headingText
-      width: Math.min(implicitWidth, parent.width - (askedText.visible ? askedText.implicitWidth + parent.spacing : 0))
-      text: root.popup ? StatusModel.requestHeading(root.item, root.name, root.service && root.item ? root.service.sessions[root.item.computer_id] : null) : root.name + " needs your approval"
-      font.bold: true
-      color: root.tokens.textTint(root.popup ? root.edge : root.tokens.attentionColor)
-      wrapMode: Text.NoWrap
-      elide: Text.ElideRight
-    }
-    Copy {
-      id: askedText
-      visible: text !== "" && !root.compact && !root.popup
-      text: root.unreachable ? "not answering right now" : root.asked
-      color: root.unreachable ? root.tokens.textTint(root.tokens.pausedColor) : root.tokens.dim
-      font.pixelSize: Style.font.bodySmall
-      anchors.baseline: headingText.baseline
-      wrapMode: Text.NoWrap
-    }
-  }
-  // The request in words, whole: "codex@laptop, working on “…” on AcePC AK2, wants your login for sos.ok.gov".
   Copy {
     width: parent.width
-    text: root.popup ? StatusModel.requestPopupText(root.item) : root.item ? root.item.summary : ""
-    maximumLineCount: root.popup ? 1 : 2147483647
-    elide: Text.ElideRight
-    font.pixelSize: root.compact ? Style.font.bodySmall : Style.font.body
+    text: "Sign-in needed · " + (sites.length === 1 ? sites[0].site : sites.length + " sites")
+    font.bold: true
+    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
   }
-  // Several sites: a tick for each; only the ticked ones are shared.
+  Copy {
+    width: parent.width
+    text: (login && login.agent ? login.agent : "Agent") + " · " + root.name
+    font.pixelSize: Style.font.bodySmall
+    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+  }
   Flow {
-    visible: !root.popup && root.several && (root.mode === "answer" || root.mode === "off")
+    visible: root.sites.length > 1 && !root.popup
     width: parent.width
     spacing: Style.space(6)
     Repeater {
@@ -152,152 +107,143 @@ Toast {
       delegate: ActionButton {
         required property var modelData
         readonly property bool ticked: !root.unticked[modelData.site]
+        label: modelData.site + (modelData.via ? " via " + modelData.via : "")
+        glyph: ticked ? "✓" : ""
         size: "small"
         role: "quiet"
-        glyph: ticked ? "✓" : " "
-        label: modelData.site
         selected: ticked
-        blocked: root.answering
-        disabledReason: root.busyReason
+        blocked: root.answering || root.settled(modelData)
         Accessible.role: Accessible.CheckBox
         Accessible.checkable: true
         Accessible.checked: ticked
-        Accessible.name: "Share " + modelData.site
-        tooltipText: ticked ? "Leave " + modelData.site + " out of this answer" : "Include " + modelData.site
-        onClicked: if (!blocked) root.toggleSite(modelData.site)
+        tooltipText: "Unselected sites remain unanswered."
+        onClicked: root.toggleSite(modelData.site)
       }
     }
   }
-  // Where and why it can't be answered here, or what the last answer left.
   Copy {
-    visible: text !== ""
+    visible: root.proposed
     width: parent.width
-    maximumLineCount: root.popup ? 1 : 2147483647
-    elide: Text.ElideRight
-    text: root.mode === "older" ? "ibara on this computer can't share logins. Update ibara here to answer this."
-      : root.mode === "elsewhere" ? "Answer this on " + root.elsewhere + "."
-      : root.mode === "off" ? (root.turnOnReason ? "Login sharing is off. " + root.turnOnReason : "Login sharing is off. Turn it on to share your login from " + root.browser + " on this computer.")
-      : root.mode === "signedOut" ? StatusModel.loginSignedOutWords(root.outcome.signedOut, root.browser)
-      : root.unreachable ? root.busyReason : ""
-    color: root.mode === "signedOut" ? root.tokens.textTint(root.tokens.attentionColor) : root.tokens.textTint(root.tokens.pausedColor)
-    font.pixelSize: Style.font.bodySmall
-    font.bold: root.mode === "elsewhere"
+    text: root.proposed ? "Create a free account at " + root.signup.proposal.site + " for " + root.signup.proposal.identity +
+      ". Save access in " + root.signup.proposal.credential_store + ". " + root.signup.proposal.summary : ""
+    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
   }
-  Flickable {
-    id: detailsBox
-    visible: root.detailsOpen && !root.popup
+  Copy {
+    visible: root.unreachable || (!root.canAssist && root.detailsOpen)
     width: parent.width
-    height: Math.min(factsColumn.implicitHeight, Style.space(root.compact ? 120 : 200))
-    contentWidth: width
-    contentHeight: factsColumn.implicitHeight
-    clip: true
-    interactive: contentHeight > height
-    boundsBehavior: Flickable.StopAtBounds
-    flickableDirection: Flickable.VerticalFlick
-    Accessible.role: Accessible.StaticText
-    Accessible.name: "Details: " + root.facts.map(function(f) { return f.label + ": " + f.value }).join(". ")
-    Column {
-      id: factsColumn
-      width: detailsBox.width
-      spacing: Style.space(3)
-      Repeater {
-        model: root.facts
-        delegate: Item {
-          required property var modelData
-          width: factsColumn.width
-          height: Math.max(factLabel.implicitHeight, factValue.implicitHeight)
-          Copy { id: factLabel; width: Style.space(96); text: modelData.label; dimmed: true; font.pixelSize: Style.font.bodySmall }
-          Copy { id: factValue; x: Style.space(104); width: parent.width - x; textFormat: Text.StyledText; text: root.tokens.detailMarkup(modelData.label, modelData.value, "send"); font.pixelSize: Style.font.bodySmall; wrapMode: Text.WrapAtWordBoundaryOrAnywhere }
-        }
-      }
-    }
+    text: root.unreachable ? root.busyReason : "Update this computer for Not now and No account choices. Joining remains available."
+    dimmed: true
   }
   Flow {
     width: parent.width
     spacing: Style.space(8)
     ActionButton {
+      id: createButton
+      visible: root.proposed && !(root.popup && root.sites.length > 1)
+      label: root.answering && root.chosen === "approve_signup" ? "Answering…" : "Create free account"
+      size: "small"
+      role: "primary"
+      blocked: root.answering || root.unreachable
+      onClicked: if (!blocked) root.assist("approve_signup")
+    }
+    ActionButton {
       id: shareButton
-      // Sharing remains independent of the person's remote desktop control.
-      visible: root.mode === "answer"
-      label: root.answering && root.chosen === "share" ? "Sharing…" : "Share"
+      visible: root.canShare && !root.proposed
+      label: root.answering ? "Sharing…" : "Share sign-in"
+      size: "small"
       role: "primary"
-      size: "small"
-      blocked: root.answering || root.unreachable || !root.tickedCount
-      disabledReason: root.busyReason || (!root.tickedCount ? "Tick a site to share." : "")
-      tooltipText: disabledReason || "Share with " + root.name + " now, and from now on without asking"
-      Accessible.name: "Share on " + root.name + ": " + (root.item ? root.item.summary : "")
-      onClicked: if (!blocked) root.answer("share")
-    }
-    ActionButton {
-      visible: root.mode === "answer"
-      label: root.answering && root.chosen === "share_all" ? "Sharing…" : "Share With All Computers"
-      size: "small"
-      blocked: root.answering || root.unreachable || !root.tickedCount
-      disabledReason: root.busyReason || (!root.tickedCount ? "Tick a site to share." : "")
-      tooltipText: disabledReason || "Share now, and let every computer of yours have it without asking from now on"
-      Accessible.name: "Share with all computers: " + (root.item ? root.item.summary : "")
-      onClicked: if (!blocked) root.answer("share_all")
-    }
-    ActionButton {
-      id: retryButton
-      visible: root.mode === "signedOut"
-      label: root.answering && root.chosen === "retry" ? "Retrying…" : "Retry"
-      role: "primary"
-      size: "small"
       blocked: root.answering || root.unreachable
-      disabledReason: root.busyReason
-      Accessible.name: "Retry sharing on " + root.name
-      onClicked: if (!blocked) root.retry()
-    }
-    ActionButton {
-      id: turnOnButton
-      visible: root.mode === "off" && !root.turnOnReason
-      label: root.service && root.service.busy["login-on"] ? "Turning On…" : "Turn On Login Sharing"
-      role: "primary"
-      size: "small"
-      blocked: !!root.service && !!root.service.busy["login-on"]
-      disabledReason: blocked ? "ibara is turning it on." : ""
-      tooltipText: disabledReason || "Share logins from " + root.browser + " on this computer, only when you allow them"
-      onClicked: if (!blocked) root.turnOn(turnOnButton)
-    }
-    ActionButton {
-      visible: root.mode === "answer" || root.mode === "signedOut" || root.mode === "off"
-      label: root.answering && root.chosen === "decline" ? "Answering…" : "Don't Share"
-      role: "danger"
-      size: "small"
-      blocked: root.answering || root.unreachable
-      disabledReason: root.busyReason
-      tooltipText: disabledReason || "Refuse this time; nothing changes for later"
-      Accessible.name: "Don't share on " + root.name + ": " + (root.item ? root.item.summary : "")
-      onClicked: if (!blocked) root.answer("decline")
+      tooltipText: root.canAssist && !root.remember ? "Deliver once for this task; do not change saved sharing rules." : "Allow sharing on this computer from now on."
+      onClicked: if (!blocked) root.answer(root.canAssist && !root.remember ? "share_once" : "share")
     }
     TakeControlButton {
+      id: joinButton
       service: root.service
       host: root.host
       computerId: root.computerId
-      visible: !root.popup && computerId !== "" && (!root.service || !root.service.holdsControlOn(computerId) || connecting)
+      actionLabel: "Join to sign in"
+      onJoinRequested: if (root.canAssist) root.assist("person_sign_in")
+      visible: computerId !== "" && (!root.service || !root.service.holdsControlOn(computerId) || connecting)
+      size: "small"
+      role: root.canShare || root.proposed ? "secondary" : "primary"
+    }
+    ActionButton {
+      visible: root.canAssist
+      label: "Not now"
       size: "small"
       role: "secondary"
+      blocked: root.answering || root.unreachable || !root.selectedSites.length
+      onClicked: if (!blocked) root.assist("defer")
     }
     ActionButton {
-      id: detailsButton
-      visible: !root.popup
-      label: root.detailsOpen ? "Hide Details" : "Details"
+      id: optionsButton
+      visible: root.canAssist
+      label: root.optionsOpen ? "Fewer options" : "Other options"
+      size: "small"
+      role: "quiet"
+      selected: root.optionsOpen
+      onClicked: root.optionsOpen = !root.optionsOpen
+    }
+    ActionButton {
+      label: root.detailsOpen ? "Hide details" : "Details"
+      size: "small"
+      role: "quiet"
+      selected: root.detailsOpen
+      onClicked: root.detailsOpen = !root.detailsOpen
+    }
+  }
+  Flow {
+    visible: root.optionsOpen && root.canAssist
+    width: parent.width
+    spacing: Style.space(8)
+    Repeater {
+      model: [{label:"I don’t have an account",choice:"no_account"}, {label:"Continue without signing in",choice:"without_account"},
+        {label:"I’ve signed in",choice:"signed_in"}, {label:"Don’t use my login",choice:"decline"}, {label:"Stop this sign-in",choice:"cancel"}]
+      delegate: ActionButton {
+        required property var modelData
+        label: modelData.label
+        size: "small"
+        role: "secondary"
+        blocked: root.answering || root.unreachable || !root.selectedSites.length
+        onClicked: if (!blocked) root.assist(modelData.choice)
+      }
+    }
+  }
+  Column {
+    visible: root.detailsOpen
+    width: parent.width
+    spacing: Style.space(4)
+    Repeater {
+      model: root.facts
+      delegate: Copy {
+        required property var modelData
+        width: parent.width
+        text: modelData.label + ": " + modelData.value
+        textFormat: Text.PlainText
+        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+        font.pixelSize: Style.font.bodySmall
+      }
+    }
+    ActionButton {
+      visible: root.canShare && root.canAssist
+      label: "Remember for this computer"
+      glyph: root.remember ? "✓" : ""
+      selected: root.remember
       role: "quiet"
       size: "small"
-      selected: root.detailsOpen
-      Accessible.name: (root.detailsOpen ? "Hide the details of " : "Show the details of ") + "the login request on " + root.name
-      onClicked: root.toggleDetails()
+      Accessible.role: Accessible.CheckBox
+      Accessible.checkable: true
+      Accessible.checked: root.remember
+      tooltipText: "When you choose Share sign-in, also allow future sharing here."
+      onClicked: root.remember = !root.remember
     }
     ActionButton {
-      visible: root.detailsOpen && !root.popup && root.mode === "answer"
-      label: root.answering && root.chosen === "never" ? "Answering…" : "Never Share"
-      role: "danger"
+      visible: root.canShare
+      label: "Never share on any computer"
+      role: "quiet"
       size: "small"
-      blocked: root.answering || root.unreachable || !root.tickedCount
-      disabledReason: root.busyReason || (!root.tickedCount ? "Tick a site to deny." : "")
-      tooltipText: disabledReason || "Deny " + (root.several ? "the ticked sites" : root.sites.length ? root.sites[0].site : "this site") + " on every computer, so agents are never asked for it again"
-      Accessible.name: "Never share, on any computer: " + StatusModel.listWords(root.sites.filter(function(s) { return !root.unticked[s.site] }).map(function(s) { return s.site }))
+      blocked: root.answering || root.unreachable || !root.selectedSites.length
+      tooltipText: "Save a Denied sharing rule for the selected sites on every computer."
       onClicked: if (!blocked) root.answer("never")
     }
   }

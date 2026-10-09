@@ -3,7 +3,7 @@ import qs.Commons
 import qs.Ui
 import "StatusModel.js" as StatusModel
 
-// The fleet wall: every computer as a live card, attention first, directly under the toolbar.
+// The fleet wall: stable live cards directly under the toolbar.
 // Nothing sits between the toolbar and the cards: approvals, requests, notes and errors are
 // toasts (Toasts.qml). Presentation only; records and preview subscriptions belong to Service,
 // confirmations to the console.
@@ -13,7 +13,7 @@ Item {
   property var service: null
   property string searchText: ""
   property string filter: "all"
-  property string sortMode: "attention"
+  readonly property string sortMode: service ? String(service.setting("fleet_sort", "name")) : "name"
   // The header is one line when the title, filters, Sort and actions fit side by side; otherwise
   // the filters and Sort take a second line under it. The counts beside the title take what room
   // is left, in their order, and those that don't fit are left out. No spare padding either way.
@@ -70,7 +70,16 @@ Item {
       if ((filter === "attention" || filter === "use" || filter === "ready") && tokens.groupOf(state) !== filter) return false
       return !term || tokens.label(c).toLocaleLowerCase().indexOf(term) !== -1
     })
-    return tokens.sortComputers(rows, sortMode)
+    // Attention order is a snapshot chosen by the person, not a live sort on status.
+    var named = tokens.sortComputers(rows, "name")
+    var saved = service ? service.setting("fleet_order", []) : []
+    if (sortMode !== "attention" || !Array.isArray(saved)) return named
+    return named.sort(function(a, b) {
+      var ai = saved.indexOf(String(a.computer_id)), bi = saved.indexOf(String(b.computer_id))
+      if (ai < 0) ai = saved.length
+      if (bi < 0) bi = saved.length
+      return ai - bi || tokens.label(a).localeCompare(tokens.label(b))
+    })
   }
   readonly property real cardGap: Style.space(10)
   // Under a card's picture: its name and its activity line.
@@ -301,9 +310,11 @@ Item {
         width: Math.max(implicitWidth, Math.ceil(countMetrics.advanceWidth("Sort: Attention First ▾")) + button.padding * 2)
         label: "Sort: " + (root.sortMode === "attention" ? "Attention First" : "Name") + " ▾"
         accessibleName: "Sort: " + (root.sortMode === "attention" ? "attention first" : "by name")
-        tooltipText: "Choose the order of the computers"
+        tooltipText: "Choose a remembered order. Attention First sorts once; status changes stay in place."
         items: orders.map(function(order) { return { id: order.id, label: order.label, selected: root.sortMode === order.id } })
-        onTriggered: id => root.sortMode = id
+        onTriggered: id => {
+          if (root.service) root.service.saveFleetOrder(id, tokens.sortComputers(root.computers, id).map(function(c) { return String(c.computer_id) }))
+        }
       }
     }
     Row {
