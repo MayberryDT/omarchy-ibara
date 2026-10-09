@@ -25,6 +25,7 @@ FocusScope {
   signal bodyClicked()
   default property alias toastBody: body.data
   signal dismissed()
+  signal expired()
 
   function restartClock() { if (clock.running) clock.restart() }
   function focusFirst() {
@@ -79,7 +80,7 @@ FocusScope {
     id: clock
     running: root.life > 0 && root.visible && !hover.hovered && !(root.activeFocus && root.focusHolds) && !root.holding
     interval: root.life
-    onTriggered: root.dismissed()
+    onTriggered: root.popup ? root.expired() : root.dismissed()
   }
   // Arrives from the right, where the stack sits, and settles.
   opacity: 0

@@ -49,6 +49,8 @@ PanelWindow {
             item: slot.request
             popup: true
             compact: true
+            life: 15000
+            onExpired: root.service.hideRequestPopup(item.ref)
             dismissName: "Later · Keep this approval in the console"
             onDismissed: root.service.hideRequestPopup(item.ref)
             onBodyClicked: root.service.openRequest(item)
@@ -61,10 +63,12 @@ PanelWindow {
             item: slot.request
             popup: true
             compact: true
+            life: 15000
+            onExpired: root.service.hideRequestPopup(item.ref)
             dismissName: "Not now · Keep this login request for later"
             onDismissed: {
+              root.service.hideRequestPopup(item.ref)
               if (canAssist) assist("defer")
-              else root.service.hideRequestPopup(item.ref)
             }
             onBodyClicked: root.service.openRequest(item)
             onSettingsWanted: root.service.openRequestSettings()
@@ -77,6 +81,8 @@ PanelWindow {
             item: slot.request
             popup: true
             compact: true
+            life: 15000
+            onExpired: root.service.hideRequestPopup(item.ref)
             dismissName: "Later · Keep this question in the console"
             onDismissed: root.service.hideRequestPopup(item.ref)
             onBodyClicked: root.service.openRequest(item)

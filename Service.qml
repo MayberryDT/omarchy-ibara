@@ -1053,19 +1053,50 @@ Item {
     return true
   }
   property var hiddenRequestPopups: ({})
+  property bool requestDismissalsReady: false
+  FileView {
+    id: requestDismissals
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/ibara-request-dismissals.json"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      if (root.requestDismissalsReady) return
+      try {
+        var saved = JSON.parse(text())
+        if (saved && typeof saved === "object" && !Array.isArray(saved)) root.hiddenRequestPopups = saved
+      } catch (e) {}
+      root.requestDismissalsReady = true
+    }
+    onLoadFailed: root.requestDismissalsReady = true
+  }
+  function requestNeedsAlert(item) {
+    if (!requestDismissalsReady || !item) return false
+    var hidden = hiddenRequestPopups[item.ref]
+    return (!hidden || hidden.signature !== requestAlertSignature(item)) && (item.kind !== "login" || loginNeedsNotification(item))
+  }
+  function requestAlertSignature(item) {
+    var assistance = item && item.login && item.login.assistance
+    // A new signup proposal is a new decision. Poll/retry revisions are not.
+    return assistance && assistance.signup && assistance.signup.state === "proposed" ? JSON.stringify(assistance.signup) : "request"
+  }
   function hideRequestPopup(ref) {
     var next = Object.assign({}, hiddenRequestPopups)
-    next[ref] = true
+    var item = requestItems.filter(function(item) { return item.ref === ref })[0]
+    next[ref] = { at: Date.now(), signature: requestAlertSignature(item) }
+    var refs = Object.keys(next).sort(function(a,b) { return Number(next[b].at) - Number(next[a].at) })
+    refs.slice(512).forEach(function(key) { delete next[key] })
     hiddenRequestPopups = next
+    requestDismissals.setText(JSON.stringify(next))
+    closeStaleApprovalNotices()
   }
   function openRequest(item) {
     if (shell && item) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: item.computer_id, focus: "request", ref: item.ref }))
   }
   function openRequestSettings() { if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "logins" })) }
   readonly property var requestItems: approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
-  readonly property var popupRequests: !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
+  readonly property var popupRequests: requestDismissalsReady && !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
     ? requestItems.filter(function(item) {
-        return !root.hiddenRequestPopups[item.ref] && root.requestKindEnabled(item.kind) && (item.kind !== "login" || (root.loginNeedsNotification(item) && (item.login.assistance || !root.loginSourceElsewhere(item))))
+        return root.requestNeedsAlert(item) && root.requestKindEnabled(item.kind) && (item.kind !== "login" || (root.loginNeedsNotification(item) && (item.login.assistance || !root.loginSourceElsewhere(item))))
       }) : []
   function requestKindEnabled(kind) { return requestBool(kind === "approval" ? "popup_approvals" : kind === "login" ? "popup_logins" : "popup_questions") }
   // Ordinary bar-widget plugins do not receive the first-party service proxy on stock
@@ -2880,10 +2911,6 @@ Item {
       next[id] = Object.assign({}, s, { needs_person: want })
     }
     if (next) publishSessions(next)
-    // Drop local dismissals once the request is gone; stale refs never grow forever.
-    var hidden = ({})
-    requestItems.forEach(function(item) { if (root.hiddenRequestPopups[item.ref]) hidden[item.ref] = true })
-    hiddenRequestPopups = hidden
     syncRequestNotices()
   }
   // Approve, Deny or Always Allow, from the console or a desktop notification. One no longer
@@ -3002,7 +3029,7 @@ Item {
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < approvals.length; i++) {
       var item = approvals[i]
-      if (seen[item.ref]) continue
+      if (seen[item.ref] || !requestNeedsAlert(item)) continue
       seen[item.ref] = true
       fresh = true
       var name = item.label || computerLabelFor(item.computer_id)
@@ -3020,7 +3047,7 @@ Item {
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < questions.length; i++) {
       var item = questions[i]
-      if (seen[item.ref]) continue
+      if (seen[item.ref] || !requestNeedsAlert(item)) continue
       seen[item.ref] = true
       fresh = true
       var name = item.label || computerLabelFor(item.computer_id)
@@ -3053,6 +3080,7 @@ Item {
         queueNotice({ title: "ibara", body: "That question on " + notice.label + " could not be answered. Open the ibara console to check whether it is still waiting." })
     } else if (notice.login && text === "defer") {
       notice.answered = true
+      hideRequestPopup(notice.ref)
       var deferred = loginByRef(notice.ref)
       if (deferred && deferred.login.assistance) answerLoginAssistance(notice.ref,
         StatusModel.loginDecisions(notice.loginSites, {}, "defer"), notice.loginRevision)
@@ -3067,6 +3095,7 @@ Item {
     }
   }
   function approvalNoticeClosed(notice) {
+    if (!notice.answered) hideRequestPopup(notice.ref)
     if (approvalNotices[notice.ref] === notice) { var notices = Object.assign({}, approvalNotices); delete notices[notice.ref]; approvalNotices = notices }
     notice.destroy()
   }
@@ -3077,7 +3106,7 @@ Item {
     for (var ref in approvalNotices) {
       var notice = approvalNotices[ref]
       var kind = notice.question ? "question" : notice.login ? "login" : "approval"
-      var pending = requestItems.some(function(item) { return item.ref === ref && (item.kind !== "login" || root.loginNeedsNotification(item)) })
+      var pending = requestItems.some(function(item) { return item.ref === ref && root.requestNeedsAlert(item) })
       if (notice.answered || !notice.noticeId || (pending && desktopRequestEnabled(kind))) continue
       notice.answered = true
       if (pending) delete seen[ref] // Settings/focus/DND may allow a new notification later.
@@ -3381,7 +3410,7 @@ Item {
     for (var i = 0; i < logins.length; i++) {
       var item = logins[i]
       var noticeKey = item.login.assistance ? "login:" + item.login.assistance.revision : true
-      if (seen[item.ref] === noticeKey || !loginNeedsNotification(item)) continue
+      if (seen[item.ref] === noticeKey || !requestNeedsAlert(item)) continue
       if (!item.login.assistance && loginSourceElsewhere(item)) continue
       seen[item.ref] = noticeKey; fresh = true
       var name = item.label || computerLabelFor(item.computer_id)

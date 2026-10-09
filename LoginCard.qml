@@ -55,6 +55,7 @@ Toast {
     return rows
   }
   function assist(choice) {
+    if (choice === "defer" && service) service.hideRequestPopup(ref)
     if (!canAssist || !service || answering || unreachable || !selectedSites.length) return
     var decisions = {}
     selectedSites.forEach(function(s){decisions[s.site]=choice})
@@ -172,8 +173,8 @@ Toast {
       label: "Not now"
       size: "small"
       role: "secondary"
-      blocked: root.answering || root.unreachable || !root.selectedSites.length
-      onClicked: if (!blocked) root.assist("defer")
+      blocked: false
+      onClicked: root.assist("defer")
     }
     ActionButton {
       id: optionsButton

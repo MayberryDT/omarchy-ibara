@@ -34,9 +34,9 @@ BarWidget {
   readonly property var problems: !stopped && ibaraService && Array.isArray(ibaraService.problems) ? ibaraService.problems : []
   readonly property string worst: stopped ? "" : problems.length > 0 ? "attention" : counts.mine > 0 ? "human" : counts.working > 0 ? "working" : ""
   // Approvals, login requests, questions and computers that need you, read every 10 s even while nothing is open.
-  readonly property var approvals: !stopped && ibaraService && Array.isArray(ibaraService.approvals) ? ibaraService.approvals : []
-  readonly property var logins: !stopped && ibaraService && Array.isArray(ibaraService.logins) ? ibaraService.logins : []
-  readonly property var questions: !stopped && ibaraService && Array.isArray(ibaraService.questions) ? ibaraService.questions : []
+  readonly property var approvals: !stopped && ibaraService && Array.isArray(ibaraService.approvals) ? ibaraService.approvals.filter(function(item) { return ibaraService.requestNeedsAlert(item) }) : []
+  readonly property var logins: !stopped && ibaraService && Array.isArray(ibaraService.logins) ? ibaraService.logins.filter(function(item) { return ibaraService.requestNeedsAlert(item) }) : []
+  readonly property var questions: !stopped && ibaraService && Array.isArray(ibaraService.questions) ? ibaraService.questions.filter(function(item) { return ibaraService.requestNeedsAlert(item) }) : []
   readonly property var needsYou: !stopped && ibaraService && Array.isArray(ibaraService.needsYou) ? ibaraService.needsYou : []
   readonly property int needsCount: approvals.length + logins.length + questions.length + needsYou.length
   // The same counts and words as the fleet header, listing only what is not zero.
