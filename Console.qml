@@ -94,14 +94,17 @@ Panel {
     delete actions[key]
     toastActions = actions
   }
-  // ✕, Escape or a note's time running out. An approval or a request to use this computer
-  // can't be dismissed: it stays until it is answered.
+  // Dismissing a request hides its alert; the pending request remains available.
   function dismissToast(key) {
     var at = toastIndex(key)
     forgetToastAction(key)
     if (at === -1) return
     var row = toastModel.get(at), kind = row.kind, ref = row.ref
-    if (kind === "approval" || kind === "login" || kind === "pair" || kind === "question" || kind === "login-setup") return
+    if (kind === "approval" || kind === "login" || kind === "question") {
+      if (requestedAttentionRef === ref) requestedAttentionRef = ""
+      if (service) service.hideRequestPopup(ref)
+    }
+    if (kind === "pair" || kind === "login-setup") return
     toastModel.remove(at)
     if (!service) return
     if (key === "action-error") service.actionError = ""
@@ -119,12 +122,16 @@ Panel {
   }
   // The standing toasts follow their conditions: new ones join at the bottom, gone ones leave,
   // and one that stays keeps its place (and the keyboard, if it has it).
+  property string requestedAttentionRef: ""
+  property double requestedDismissalAt: 0
   function syncStanding() {
     if (!service) return
     var open = route === "computer" ? computer : null
     var wanted = StatusModel.standingToasts({
       route: route, computerId: computerId,
-      approvals: service.approvals, logins: service.logins, questions: service.questions, pairRequests: service.pairRequests,
+      approvals: service.approvals.filter(function(item) { return item.ref === root.requestedAttentionRef || service.requestNeedsAlert(item) }),
+      logins: service.logins.filter(function(item) { return item.ref === root.requestedAttentionRef || service.requestNeedsAlert(item) }),
+      questions: service.questions.filter(function(item) { return item.ref === root.requestedAttentionRef || service.requestNeedsAlert(item) }), pairRequests: service.pairRequests,
       needs: service.needsYou, problems: service.problems, loginRejected: service.loginRejected,
       drop: open && service.drops ? service.drops[computerId] || null : null,
       whatsNew: service.whatsNew, loginSetup: service.loginSetupWanted, themeRun: service.themeRun,
@@ -285,10 +292,14 @@ Panel {
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") || ({}) } catch (error) {}
+    requestedAttentionRef = ""
+    requestedDismissalAt = 0
     if (service && typeof service.setSurfaceOpen === "function") service.setSurfaceOpen("console", true)
     // The route is chosen before the window exists, so only that route's page is built.
     if (payload.route === "computer" && typeof payload.computerId === "string" && payload.computerId) {
       // The bar opens one approval directly: the keyboard lands on its Approve.
+      requestedAttentionRef = payload.focus === "request" || payload.focus === "approval" ? String(payload.ref || "") : ""
+      requestedDismissalAt = service && service.hiddenRequestPopups[requestedAttentionRef] ? Number(service.hiddenRequestPopups[requestedAttentionRef].at || 0) : 0
       pendingFocus = (payload.focus === "approval" || payload.focus === "request") && typeof payload.ref === "string" ? { kind: payload.focus, ref: payload.ref } : null
       showComputer(payload.computerId, payload.tab)
     }
@@ -315,6 +326,8 @@ Panel {
   // Closing forgets the open computer, its scope and any pending route, so the next plain
   // open lands on the fleet. The reset is silent: no route change is shown while hidden.
   function resetOnClose() {
+    requestedAttentionRef = ""
+    requestedDismissalAt = 0
     confirmation = null
     leaveAdd.stop()
     connectOpen = false
@@ -441,6 +454,12 @@ Panel {
     // whether an agent has begun a task.
     function onApprovalsChanged() { root.syncStandingLater() }
     function onLoginsChanged() { root.syncStandingLater() }
+    function onHiddenRequestPopupsChanged() {
+      var hidden = root.service.hiddenRequestPopups[root.requestedAttentionRef]
+      if (hidden && Number(hidden.at || 0) !== root.requestedDismissalAt) root.requestedAttentionRef = ""
+      root.syncStandingLater()
+    }
+    function onRequestDismissalsReadyChanged() { root.syncStandingLater() }
     function onLoginRejectedChanged() { root.syncStandingLater() }
     function onLoginSetupWantedChanged() { root.syncStandingLater() }
     function onQuestionsChanged() { root.syncStandingLater() }

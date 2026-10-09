@@ -137,9 +137,9 @@ Item {
   function waitingByComputer() {
     var out = ({})
     // A login request waits for your approval like any other.
-    var asks = approvals.concat(logins)
+    var asks = approvals.concat(logins).filter(function(item) { return root.requestNeedsAlert(item) })
     for (var i = 0; i < asks.length; i++) { var a = asks[i].computer_id; out[a] = out[a] || { approvals: 0, questions: 0 }; out[a].approvals += 1 }
-    for (var j = 0; j < questions.length; j++) { var q = questions[j].computer_id; out[q] = out[q] || { approvals: 0, questions: 0 }; out[q].questions += 1 }
+    for (var j = 0; j < questions.length; j++) { if (!requestNeedsAlert(questions[j])) continue; var q = questions[j].computer_id; out[q] = out[q] || { approvals: 0, questions: 0 }; out[q].questions += 1 }
     return out
   }
   // An approval or a question that comes or goes changes its computer's state everywhere.
@@ -1054,6 +1054,8 @@ Item {
   }
   property var hiddenRequestPopups: ({})
   property bool requestDismissalsReady: false
+  onRequestDismissalsReadyChanged: Qt.callLater(root.republishWaiting)
+  onHiddenRequestPopupsChanged: Qt.callLater(root.republishWaiting)
   FileView {
     id: requestDismissals
     path: Quickshell.env("HOME") + "/.local/state/omarchy/ibara-request-dismissals.json"
@@ -1383,7 +1385,8 @@ Item {
     var s = sessions[String(computerId || "")]
     if (!s || !s.turn) return ""
     if (s.turn === "person") return holdsControlOn(computerId) ? "Your Turn" : String(s.turn_holder || "A person") + "’s Turn"
-    return "Agent’s Turn"
+    var state = StatusModel.computerState(s)
+    return state === "working" ? "Agent working" : state === "ready" ? "Ready" : state === "paused" ? "Agents paused" : ""
   }
   readonly property var heldComputerIds: Object.keys(sessions).filter(function(id) { return root.holdsControlOn(id) }).sort()
   readonly property bool denied: connectionState === "unauthorized"
@@ -1758,7 +1761,7 @@ Item {
     previewQueue = []
     return true
   }
-  function takeControlFor(computerId) {
+  function takeControlFor(computerId, force) {
     if (!selectComputer(computerId)) return false
     var s = sessions[computerId]
     if (holdsControlOn(computerId)) { actionError = "You already have control of this computer."; return false }
@@ -1771,7 +1774,7 @@ Item {
       binding_revision: s.binding_revision, controller_epoch: s.controller_epoch,
       authorization_generation: s.authorization_generation }
     startHelper("operator-take-control", ["operator-control", "--computer", computerId, "--epoch", s.controller_epoch,
-      "--op", s.screen_engine === "ibara" ? "join" : "take_control", "--owner", s.owner_name, "--revision", s.ownership_revision])
+      "--op", s.screen_engine === "ibara" && force !== true ? "join" : "take_control", "--owner", s.owner_name, "--revision", s.ownership_revision])
     return true
   }
   function connectingOn(computerId) {
@@ -2478,6 +2481,14 @@ Item {
     requestScopedRead("procedure", "operator-procedure", ["--ref", ref], ref)
   }
   function extendTask(taskRef, seconds) { return startComputerAction("extend", "operator-task-extend", scopedComputerId, ["--task", String(taskRef), "--seconds", String(seconds)]) }
+  function releaseComputerTask(computerId, taskRef) {
+    var current = sessions[computerId]
+    if (!current || String(current.active_task_ref || "") !== taskRef) {
+      actionError = "The active task changed. Review this computer before stopping it."
+      return false
+    }
+    return startComputerAction("revoke", "operator-task-revoke", computerId, ["--task", taskRef])
+  }
   function revokeTask(taskRef) { return startComputerAction("revoke", "operator-task-revoke", scopedComputerId, ["--task", String(taskRef)]) }
   // Close and Move To… on the Windows tab. Close is Hyprland's polite close, so an app can still ask to save.
   function windowTitle(address) {

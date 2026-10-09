@@ -4,7 +4,7 @@ import qs.Ui
 
 // A small fleet summary whose main job is opening the console. What waits for your answer comes
 // first, right under its title: a request to use this computer, then approvals, login requests and
-// agents' questions, oldest first (the first two, then "+N more" that opens the console). Then the
+// agents' questions, oldest first (two per page, with Next requests for the rest). Then the
 // counts and up to 5 computers, the ones that need you or are in use first; the console handles everything
 // else. While ibara isn't running on this computer, it says so instead, with Start ibara, and the
 // computers are greyed at their last known state.
@@ -29,11 +29,13 @@ Panel {
   readonly property var logins: service && Array.isArray(service.logins) ? service.logins : []
   readonly property var questions: service && Array.isArray(service.questions) ? service.questions : []
   readonly property var asks: stopped ? [] : approvals.concat(logins, questions, service && service.needsYou ? service.needsYou.filter(function(n) { return n.unsupported }) : []).sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
-  readonly property var shownAsks: asks.slice(0, 2)
+  property int askOffset: 0
+  onAsksChanged: if (askOffset >= asks.length) askOffset = 0
+  readonly property var shownAsks: asks.slice(askOffset, askOffset + 2)
   readonly property string moreAsksName: {
     var a = approvals.length + logins.length, q = questions.length
     var words = (a ? (a === 1 ? "1 approval" : a + " approvals") : "") + (a && q ? " and " : "") + (q ? (q === 1 ? "1 question" : q + " questions") : "")
-    return "Show all " + words + " in the console"
+    return "Browse " + words
   }
   // A, D, Shift+A and I answer the first approval shown, once it has been on screen for a
   // moment, so a keypress can never land on one that just replaced the one being read.
@@ -241,7 +243,7 @@ Panel {
               anchors.right: showAll.left
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              text: "+" + (root.asks.length - root.shownAsks.length) + " more waiting for your answer"
+              text: root.asks.length + " pending requests · " + (root.askOffset + 1) + "–" + Math.min(root.askOffset + 2, root.asks.length)
               font.pixelSize: Style.font.bodySmall
             }
             ActionButton {
@@ -249,10 +251,10 @@ Panel {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               size: "small"
-              label: "Show All"
+              label: "Next requests"
               focusable: false
               Accessible.name: root.moreAsksName
-              onClicked: root.openConsole()
+              onClicked: root.askOffset = root.askOffset + 2 >= root.asks.length ? 0 : root.askOffset + 2
             }
           }
         }

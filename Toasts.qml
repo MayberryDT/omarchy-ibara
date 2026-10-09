@@ -232,6 +232,9 @@ FocusScope {
   Component {
     id: approvalToast
     ApprovalCard {
+      life: 15000
+      dismissable: true
+      onDismissed: if (root.host) root.host.dismissToast(parent.key)
       readonly property string ref: parent ? parent.ref : ""
       service: root.service
       item: {
@@ -245,6 +248,9 @@ FocusScope {
   Component {
     id: loginToast
     LoginCard {
+      life: 15000
+      dismissable: true
+      onDismissed: if (root.host) root.host.dismissToast(parent.key)
       readonly property string refKey: parent ? parent.ref : ""
       service: root.service
       host: root.host
@@ -313,6 +319,7 @@ FocusScope {
   Component {
     id: awayToast
     AwayTimeline {
+      life: 15000
       readonly property string key: parent ? parent.key : ""
       host: root.host
       service: root.service
@@ -368,6 +375,9 @@ FocusScope {
   Component {
     id: questionToast
     QuestionCard {
+      life: 15000
+      dismissable: true
+      onDismissed: if (root.host) root.host.dismissToast(parent.key)
       readonly property string refKey: parent ? parent.ref : ""
       service: root.service
       host: root.host

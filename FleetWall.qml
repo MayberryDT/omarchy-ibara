@@ -957,6 +957,8 @@ Item {
     var pause = StatusModel.pauseAction(c)
     if (pause === "resume") items.push({ id: "resume", label: "Resume" })
     else if (pause === "pause") items.push({ id: "pause", label: "Pause Agents" })
+    if (c.active_task_ref) items.push({ id: "force-release", label: "Stop agent & release…", danger: true, blocked: offline, reason: reason })
+    if (service && !service.holdsControlOn(c.computer_id)) items.push({ id: "take-over", label: "Take over now…", danger: true, blocked: offline, reason: reason })
     if (offline && c.wake) items.push({ id: "wake", label: "Wake" })
     items.push({ id: "restart", label: "Restart…", danger: true, blocked: offline, reason: reason })
     items.push({ id: "shutdown", label: "Shut Down…", danger: true, blocked: offline, reason: reason })
@@ -970,6 +972,20 @@ Item {
     if (!service || !host) return
     if (action === "pause") service.pauseAgents(id)
     else if (action === "resume") service.resumeAgents(id)
+    else if (action === "force-release" || action === "take-over") {
+      var current = service.sessions[id]
+      if (!current) return
+      var epoch = current.controller_epoch, revision = current.ownership_revision
+      var endpoint = current.endpoint_id, binding = current.binding_revision, authorization = current.authorization_generation
+      var task = String(current.active_task_ref || ""), owner = current.owner_name
+      var takeover = action === "take-over"
+      host.askConfirm({ anchor: anchor, subject: id, danger: true,
+        message: (takeover ? "Take control of " : "Stop the agent on ") + tokens.label(current) + "? This cancels its active task and managed commands. Unsaved task work may be lost. " + (takeover ? "Another person's control will also end." : "The computer becomes available after cleanup."),
+        confirmLabel: takeover ? "Take over now" : "Stop & release",
+        valid: function() { var live = root.service.sessions[id]; return !!live && live.endpoint_id === endpoint && live.binding_revision === binding && live.authorization_generation === authorization && live.controller_epoch === epoch && live.ownership_revision === revision && live.owner_name === owner && String(live.active_task_ref || "") === task },
+        run: function() { if (takeover) root.service.takeControlFor(id, true); else root.service.releaseComputerTask(id, task) }
+      })
+    }
     else if (action === "wake") service.wake(id)
     else if (action === "settings") host.showComputer(id, "settings")
     else if (action === "share") host.showShare()
