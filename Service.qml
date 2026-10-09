@@ -3409,7 +3409,7 @@ Item {
     var seen = Object.assign({}, noticedApprovals), notices = Object.assign({}, approvalNotices), fresh = false
     for (var i = 0; i < logins.length; i++) {
       var item = logins[i]
-      var noticeKey = item.login.assistance ? "login:" + item.login.assistance.revision : true
+      var noticeKey = "login:" + requestAlertSignature(item)
       if (seen[item.ref] === noticeKey || !requestNeedsAlert(item)) continue
       if (!item.login.assistance && loginSourceElsewhere(item)) continue
       seen[item.ref] = noticeKey; fresh = true
