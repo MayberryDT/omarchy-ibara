@@ -135,4 +135,4 @@ omarchy-shell shell summon io.zet.ibara '{}'
 
 ## License
 
-MIT. See [LICENSE](LICENSE). ibara's core is GPL-3.0-only.
+MIT. See [LICENSE](LICENSE). ibara’s core is MIT-licensed too; its bundled stream and viewer programs retain GPL-3.0.
