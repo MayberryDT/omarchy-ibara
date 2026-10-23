@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "StatusModel.js" as StatusModel
 
@@ -839,7 +840,7 @@ Panel {
     function activateConsole() { if (keyboardSurface.Window.window) keyboardSurface.Window.window.requestActivate() }
     title: "ibara · console"
     visible: root.opened
-    color: Color.popups.background
+    color: Commons.Color.popups.background
     implicitWidth: Style.space(1700)
     implicitHeight: Style.space(920)
     minimumSize: Qt.size(Style.space(900), Style.space(560))
