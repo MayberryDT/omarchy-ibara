@@ -1,3 +1,8 @@
+# Changelog
+
+## 23 October 2026
+
+- Fix a white, unreadable console on current Omarchy by explicitly resolving its themed window background through Commons.Color.
 # 0.2.1 — 9 October 2026
 
 Request popups expire after15 seconds without answering on your behalf. Not now dismisses immediately, including when the computer is unreachable. Dismissed requests stay available in the console and no longer count as fresh alerts. Dismissals survive shell reload; a new signup proposal can still ask for a new decision.
