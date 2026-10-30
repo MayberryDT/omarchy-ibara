@@ -1,3 +1,7 @@
+# 29 October 2026
+
+- Keep desktop notification process arguments generic. Review private sign-in sites, request summaries and answer options in the console; notification Open still routes to the request.
+
 # Changelog
 
 ## 23 October 2026
