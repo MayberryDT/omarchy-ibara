@@ -1,3 +1,7 @@
+# 30 October 2026
+
+- Authenticate the version-pinned bootstrap installer with a fixed SHA-256 before running it from Install ibara or the README command. Download/checksum failures stop installation.
+
 # Changelog
 
 ## 23 October 2026
