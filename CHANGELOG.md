@@ -1,3 +1,7 @@
+# 30 October 2026
+
+- Authenticate the version-pinned bootstrap installer with a fixed SHA-256 before running it from Install ibara or the README command. Download/checksum failures stop installation.
+
 # 29 October 2026
 
 - Keep desktop notification process arguments generic. Review private sign-in sites, request summaries and answer options in the console; notification Open still routes to the request.

@@ -1,0 +1,167 @@
+{
+  "installer_url": "https://github.com/MayberryDT/ibara/releases/download/v0.3.4/install",
+  "installer_sha256": "92591da2459f18da47b6567d47cb66c0b16b988d4752fa88ec67283021a03fbe",
+  "readme_matches_plugin": true,
+  "cases": [
+    {
+      "entry": "plugin",
+      "case": "valid",
+      "exit_code": 0,
+      "interpreter_invoked": true,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "tampered",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "truncated",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "empty",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "html",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "download-error",
+      "exit_code": 22,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "missing-curl",
+      "exit_code": 127,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "checksum-error",
+      "exit_code": 2,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "missing-checksum",
+      "exit_code": 127,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "plugin",
+      "case": "public-download",
+      "exit_code": 0,
+      "interpreter_invoked": true,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "valid",
+      "exit_code": 0,
+      "interpreter_invoked": true,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "tampered",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "truncated",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "empty",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "html",
+      "exit_code": 1,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "download-error",
+      "exit_code": 22,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "missing-curl",
+      "exit_code": 127,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "checksum-error",
+      "exit_code": 2,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "missing-checksum",
+      "exit_code": 127,
+      "interpreter_invoked": false,
+      "temporary_files_cleaned": true,
+      "passed": true
+    },
+    {
+      "entry": "readme",
+      "case": "public-download",
+      "exit_code": 0,
+      "interpreter_invoked": true,
+      "temporary_files_cleaned": true,
+      "passed": true
+    }
+  ]
+}

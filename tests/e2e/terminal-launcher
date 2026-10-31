@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+import json,os,pathlib,subprocess,sys
+p=pathlib.Path(os.environ['BUTTON_LOG']);r=subprocess.run(['/bin/sh','-c',sys.argv[1]],env=os.environ)
+with p.open('a') as f:f.write(json.dumps({'command':sys.argv[1],'exit_code':r.returncode})+'\n')
+raise SystemExit(r.returncode)
