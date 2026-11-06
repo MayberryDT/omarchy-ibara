@@ -249,7 +249,9 @@ FocusScope {
     id: loginToast
     LoginCard {
       life: 15000
+      expireAsDismiss: false
       dismissable: true
+      onExpired: if (root.host) root.host.expireLoginToast(parent.key)
       onDismissed: if (root.host) root.host.dismissToast(parent.key)
       readonly property string refKey: parent ? parent.ref : ""
       service: root.service

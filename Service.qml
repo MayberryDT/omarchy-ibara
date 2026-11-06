@@ -1071,25 +1071,36 @@ Item {
     }
     onLoadFailed: root.requestDismissalsReady = true
   }
+  function requestPopupHidden(item) {
+    var hidden = item && hiddenRequestPopups[item.ref]
+    return !!hidden && hidden.signature === requestAlertSignature(item)
+  }
   function requestNeedsAlert(item) {
     if (!requestDismissalsReady || !item) return false
     var hidden = hiddenRequestPopups[item.ref]
-    return (!hidden || hidden.signature !== requestAlertSignature(item)) && (item.kind !== "login" || loginNeedsNotification(item))
+    // A timed-out login popup leaves the request in the badge and quick panel.
+    return (!requestPopupHidden(item) || (item.kind === "login" && hidden.popupOnly === true)) && (item.kind !== "login" || loginNeedsNotification(item))
   }
   function requestAlertSignature(item) {
     var assistance = item && item.login && item.login.assistance
     // A new signup proposal is a new decision. Poll/retry revisions are not.
     return assistance && assistance.signup && assistance.signup.state === "proposed" ? JSON.stringify(assistance.signup) : "request"
   }
-  function hideRequestPopup(ref) {
+  function hideRequestPopup(ref, popupOnly) {
     var next = Object.assign({}, hiddenRequestPopups)
     var item = requestItems.filter(function(item) { return item.ref === ref })[0]
-    next[ref] = { at: Date.now(), signature: requestAlertSignature(item) }
+    next[ref] = { at: Date.now(), signature: requestAlertSignature(item), popupOnly: popupOnly === true }
     var refs = Object.keys(next).sort(function(a,b) { return Number(next[b].at) - Number(next[a].at) })
     refs.slice(512).forEach(function(key) { delete next[key] })
     hiddenRequestPopups = next
     requestDismissals.setText(JSON.stringify(next))
     closeStaleApprovalNotices()
+  }
+  function expireLoginPopup(ref) {
+    var item = requestItems.filter(function(entry) { return entry.ref === ref })[0]
+    // Never turn a person's explicit dismissal into a fresh alert.
+    if (!item || item.kind !== "login" || requestPopupHidden(item)) return
+    hideRequestPopup(ref, true)
   }
   function openRequest(item) {
     if (shell && item) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: item.computer_id, focus: "request", ref: item.ref }))
@@ -1098,7 +1109,7 @@ Item {
   readonly property var requestItems: approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
   readonly property var popupRequests: requestDismissalsReady && !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
     ? requestItems.filter(function(item) {
-        return root.requestNeedsAlert(item) && root.requestKindEnabled(item.kind) && (item.kind !== "login" || (root.loginNeedsNotification(item) && (item.login.assistance || !root.loginSourceElsewhere(item))))
+        return root.requestNeedsAlert(item) && !root.requestPopupHidden(item) && root.requestKindEnabled(item.kind) && (item.kind !== "login" || (root.loginNeedsNotification(item) && (item.login.assistance || !root.loginSourceElsewhere(item))))
       }) : []
   function requestKindEnabled(kind) { return requestBool(kind === "approval" ? "popup_approvals" : kind === "login" ? "popup_logins" : "popup_questions") }
   // Ordinary bar-widget plugins do not receive the first-party service proxy on stock
@@ -3101,7 +3112,7 @@ Item {
     }
   }
   function approvalNoticeClosed(notice) {
-    if (!notice.answered) hideRequestPopup(notice.ref)
+    if (!notice.answered) { if (notice.login) expireLoginPopup(notice.ref); else hideRequestPopup(notice.ref) }
     if (approvalNotices[notice.ref] === notice) { var notices = Object.assign({}, approvalNotices); delete notices[notice.ref]; approvalNotices = notices }
     notice.destroy()
   }

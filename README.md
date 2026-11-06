@@ -49,7 +49,7 @@ From the console you can also:
 
 Every shape is square, every color comes from your Omarchy theme, and switching themes recolors everything at once.
 
-Approval, login and question requests appear in ibara's own top-right pop-ups while the console isn't focused. The cards use the console's buttons and your theme. Up to three show at once; +N More opens the rest in the console. Click a card's text to open that request. ✕ means Later: the request stays in the console with live buttons. Answered or expired requests leave the stack.
+Approval, login and question requests appear in ibara's own top-right pop-ups while the console isn't focused. The cards use the console's buttons and your theme. Up to three show at once; +N More opens the rest in the console. Click a card's text to open that request. ✕ means Later: the request stays in the console with live buttons. Answered or expired requests leave the stack. An unanswered sign-in stays in the ibara badge and quick panel; press the badge to open it. Pop-ups appear on the focused monitor.
 
 Settings keeps short help lines, with an info button for approval, disk startup and input details. Logins has its own page, reached through **Manage Logins** beside the site count in Settings. Search by site and filter **Allowed**, **Ask First** or **Denied**; choose a computer for **Share With…**, **Remove**, and expandable task and sharing history. All Sites shows each rule's computer scope; Sharing Options holds browser/profile selection and Never Share. Long lists create only visible rows.
 

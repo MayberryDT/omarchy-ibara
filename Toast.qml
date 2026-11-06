@@ -14,6 +14,7 @@ FocusScope {
   property bool tinted: false
   property bool dismissable: true
   property int life: 0
+  property bool expireAsDismiss: true
   property bool holding: false
   // Whether keyboard focus in it stops its clock: Toasts says so only for focus the person moved
   // there with the keyboard, not for a click or focus the console gave it.
@@ -80,7 +81,7 @@ FocusScope {
     id: clock
     running: root.life > 0 && root.visible && !hover.hovered && !(root.activeFocus && root.focusHolds) && !root.holding
     interval: root.life
-    onTriggered: root.popup ? root.expired() : root.dismissed()
+    onTriggered: root.popup || !root.expireAsDismiss ? root.expired() : root.dismissed()
   }
   // Arrives from the right, where the stack sits, and settles.
   opacity: 0

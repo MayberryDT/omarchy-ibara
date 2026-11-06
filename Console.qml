@@ -121,6 +121,16 @@ Panel {
     else if (kind === "login-rejected") service.dismissLoginRejected(ref)
     else if (kind === "viewer-closed") service.keepControl(ref)
   }
+  function expireLoginToast(key) {
+    var at = toastIndex(key)
+    if (at === -1) return
+    var row = toastModel.get(at)
+    if (row.kind !== "login") return
+    var ref = String(row.ref || "")
+    if (requestedAttentionRef === ref) requestedAttentionRef = ""
+    toastModel.remove(at)
+    if (service) service.expireLoginPopup(ref)
+  }
   // The standing toasts follow their conditions: new ones join at the bottom, gone ones leave,
   // and one that stays keeps its place (and the keyboard, if it has it).
   property string requestedAttentionRef: ""
@@ -131,7 +141,7 @@ Panel {
     var wanted = StatusModel.standingToasts({
       route: route, computerId: computerId,
       approvals: service.approvals.filter(function(item) { return item.ref === root.requestedAttentionRef || service.requestNeedsAlert(item) }),
-      logins: service.logins.filter(function(item) { return item.ref === root.requestedAttentionRef || service.requestNeedsAlert(item) }),
+      logins: service.logins.filter(function(item) { return item.ref === root.requestedAttentionRef || (service.requestNeedsAlert(item) && !service.requestPopupHidden(item)) }),
       questions: service.questions.filter(function(item) { return item.ref === root.requestedAttentionRef || service.requestNeedsAlert(item) }), pairRequests: service.pairRequests,
       needs: service.needsYou, problems: service.problems, loginRejected: service.loginRejected,
       drop: open && service.drops ? service.drops[computerId] || null : null,

@@ -1,3 +1,7 @@
+# 5 November 2026
+
+- Open request pop-ups on the focused monitor. Keep unanswered sign-ins in the badge and quick panel after the pop-up closes, and open the panel from the badge.
+
 # 30 October 2026
 
 - Authenticate the version-pinned bootstrap installer with a fixed SHA-256 before running it from Install ibara or the README command. Download/checksum failures stop installation.

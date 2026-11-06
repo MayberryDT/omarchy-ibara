@@ -26,7 +26,7 @@ Panel {
   readonly property bool stopped: !!service && service.serviceStopped === true
   // Approvals, login requests and agents' questions, oldest first; the first two show here.
   readonly property var approvals: service && Array.isArray(service.approvals) ? service.approvals : []
-  readonly property var logins: service && Array.isArray(service.logins) ? service.logins : []
+  readonly property var logins: service && Array.isArray(service.logins) ? service.logins.filter(function(item) { return service.requestNeedsAlert(item) }) : []
   readonly property var questions: service && Array.isArray(service.questions) ? service.questions : []
   readonly property var asks: stopped ? [] : approvals.concat(logins, questions, service && service.needsYou ? service.needsYou.filter(function(n) { return n.unsupported }) : []).sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
   property int askOffset: 0

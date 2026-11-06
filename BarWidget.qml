@@ -87,6 +87,8 @@ BarWidget {
   // else the fleet, where every approval and every computer that needs you shows first. With
   // nothing to answer, the red dot opens what it is about in the same way.
   function openNeeds() {
+    // The quick panel can show sign-ins even after their popups time out.
+    if (logins.length) { toggle(); return }
     var ids = []
     approvals.concat(logins, questions, needsYou).forEach(function(item) { if (ids.indexOf(item.computer_id) === -1) ids.push(item.computer_id) })
     if (!ids.length) problems.forEach(function(item) { if (ids.indexOf(item.computer_id) === -1) ids.push(item.computer_id) })

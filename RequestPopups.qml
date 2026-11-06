@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Wayland
 import qs.Commons
 
@@ -9,8 +10,28 @@ PanelWindow {
   id: root
   property var service: null
   readonly property var requests: service ? service.popupRequests : []
-  visible: requests.length > 0
-  screen: Quickshell.screens.length ? Quickshell.screens[0] : null
+  readonly property bool hasRequests: requests.length > 0
+  property var targetScreen: null
+  function focusedScreen() {
+    var monitor = Hyprland.focusedMonitor
+    var name = monitor ? String(monitor.name || "") : ""
+    for (var i = 0; i < Quickshell.screens.length; i++)
+      if (Quickshell.screens[i].name === name) return Quickshell.screens[i]
+    return Quickshell.screens.length ? Quickshell.screens[0] : null
+  }
+  onHasRequestsChanged: targetScreen = hasRequests ? focusedScreen() : null
+  Component.onCompleted: if (hasRequests) targetScreen = focusedScreen()
+  Connections {
+    target: Quickshell
+    function onScreensChanged() {
+      if (root.hasRequests && Quickshell.screens.indexOf(root.targetScreen) < 0) {
+        root.targetScreen = null
+        Qt.callLater(function() { if (root.hasRequests && !root.targetScreen) root.targetScreen = root.focusedScreen() })
+      }
+    }
+  }
+  visible: hasRequests && !!targetScreen
+  screen: targetScreen
   anchors { top: true; right: true }
   margins { top: Style.space(48); right: Style.space(12) }
   exclusionMode: ExclusionMode.Ignore
@@ -64,7 +85,7 @@ PanelWindow {
             popup: true
             compact: true
             life: 15000
-            onExpired: root.service.hideRequestPopup(item.ref)
+            onExpired: root.service.expireLoginPopup(item.ref)
             dismissName: "Not now · Keep this login request for later"
             onDismissed: {
               root.service.hideRequestPopup(item.ref)
