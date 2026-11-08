@@ -1,0 +1,30 @@
+{
+  "checks": {
+    "changed_proposal_realerts": true,
+    "converted_signature_not_rehashed": true,
+    "disk_has_no_proposal_after_fixture": true,
+    "expired_request_still_alerts": true,
+    "explicit_dismissal_hashes_signature": true,
+    "explicit_dismissal_quiets_alert": true,
+    "legacy_dismissal_stays_dismissed": true,
+    "legacy_signature_converted": true,
+    "malformed_entries_do_not_stop_loading": true,
+    "migrate_load_completes": true,
+    "migration_hash_matches_independent_md5": true,
+    "migration_removes_proposal_from_disk": true,
+    "new_proposal_popup_opens": true,
+    "no_leftover_temporary_files": true,
+    "no_proposal_text_anywhere_under_home": true,
+    "no_qml_errors": true,
+    "real_popup_expiry_hashes_signature": true,
+    "real_popup_expiry_recorded_popup_only": true,
+    "reload_does_not_rewrite_clean_file": true,
+    "reload_keeps_dismissal": true,
+    "reload_keeps_popup_only_expiry": true,
+    "reload_opens_no_popup": true,
+    "request_signature_unchanged": true
+  },
+  "leak_paths": [],
+  "passed": true,
+  "qml_errors": []
+}

@@ -1,3 +1,7 @@
+# 8 November 2026
+
+- Keep sign-up proposal details out of the saved popup dismissal file. Dismissals store only a fingerprint, and files from earlier versions are converted when the plugin loads.
+
 # 5 November 2026
 
 - Open request pop-ups on the focused monitor. Keep unanswered sign-ins in the badge and quick panel after the pop-up closes, and open the panel from the badge.

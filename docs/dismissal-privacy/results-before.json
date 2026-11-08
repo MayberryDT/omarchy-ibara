@@ -1,0 +1,34 @@
+{
+  "checks": {
+    "changed_proposal_realerts": true,
+    "converted_signature_not_rehashed": true,
+    "disk_has_no_proposal_after_fixture": false,
+    "expired_request_still_alerts": false,
+    "legacy_dismissal_stays_dismissed": true,
+    "legacy_signature_converted": false,
+    "malformed_entries_do_not_stop_loading": true,
+    "migrate_load_completes": true,
+    "migration_hash_matches_independent_md5": false,
+    "migration_removes_proposal_from_disk": false,
+    "new_proposal_popup_opens": true,
+    "no_leftover_temporary_files": true,
+    "no_proposal_text_anywhere_under_home": false,
+    "no_qml_errors": false,
+    "real_popup_expiry_hashes_signature": false,
+    "real_popup_expiry_recorded_popup_only": false,
+    "reload_does_not_rewrite_clean_file": true,
+    "reload_keeps_dismissal": false,
+    "reload_keeps_popup_only_expiry": false,
+    "reload_opens_no_popup": false,
+    "request_signature_unchanged": true
+  },
+  "leak_paths": [
+    ".local/state/omarchy/ibara-request-dismissals.json"
+  ],
+  "passed": false,
+  "qml_errors": [
+    "  WARN scene: @plugin/Service.qml[1093:-1]: TypeError: Cannot read property 'at' of null",
+    "  WARN scene: @plugin/Service.qml[1093:-1]: TypeError: Value is null and could not be converted to an object",
+    "  WARN scene: @plugin/Service.qml[1093:-1]: TypeError: Value is null and could not be converted to an object"
+  ]
+}

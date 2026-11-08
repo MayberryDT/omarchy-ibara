@@ -1065,7 +1065,19 @@ Item {
       if (root.requestDismissalsReady) return
       try {
         var saved = JSON.parse(text())
-        if (saved && typeof saved === "object" && !Array.isArray(saved)) root.hiddenRequestPopups = saved
+        if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+          // Earlier versions saved the whole sign-up proposal as the signature.
+          var changed = false
+          Object.keys(saved).forEach(function(ref) {
+            var entry = saved[ref], signature = entry && entry.signature
+            if (!entry || typeof entry !== "object") { delete saved[ref]; changed = true; return }
+            if (typeof signature !== "string" || signature === "request" || /^signup:[0-9a-f]{32}$/.test(signature)) return
+            entry.signature = root.signupSignature(signature)
+            changed = true
+          })
+          root.hiddenRequestPopups = saved
+          if (changed) Qt.callLater(function() { requestDismissals.setText(JSON.stringify(saved)) })
+        }
       } catch (e) {}
       root.requestDismissalsReady = true
     }
@@ -1081,10 +1093,12 @@ Item {
     // A timed-out login popup leaves the request in the badge and quick panel.
     return (!requestPopupHidden(item) || (item.kind === "login" && hidden.popupOnly === true)) && (item.kind !== "login" || loginNeedsNotification(item))
   }
+  // Saved to a file other local accounts may be able to read, so it never holds proposal text.
+  function signupSignature(proposal) { return "signup:" + Qt.md5(proposal) }
   function requestAlertSignature(item) {
     var assistance = item && item.login && item.login.assistance
     // A new signup proposal is a new decision. Poll/retry revisions are not.
-    return assistance && assistance.signup && assistance.signup.state === "proposed" ? JSON.stringify(assistance.signup) : "request"
+    return assistance && assistance.signup && assistance.signup.state === "proposed" ? signupSignature(JSON.stringify(assistance.signup)) : "request"
   }
   function hideRequestPopup(ref, popupOnly) {
     var next = Object.assign({}, hiddenRequestPopups)
