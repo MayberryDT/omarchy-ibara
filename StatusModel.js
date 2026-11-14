@@ -534,8 +534,11 @@ function listOf(value, key) {
 // A computer that answers with its screen locked (`locked`) is "locked": agents can't use it and
 // Join is how a person unlocks it.
 var ATTENTION_TASK_STATES = ["waiting_for_human", "interrupted", "blocked"]
+// A picture that didn't come in time. The last one stays with this note over it, and the computer
+// keeps its state: only its status reads say whether it is answering.
+var PICTURE_LATE = "Busy · picture is late"
 // Preview notes that are routine while a frame is on its way; any other note without a frame needs a look.
-var ROUTINE_FRAME_NOTES = /^(Preview pending|Preview unavailable|Waiting for an authorized preview\.|Not previewed: |Preview released |Controller restarted|This computer has no display yet\.|ibara dropped a picture |BUDGET_EXCEEDED\b)/
+var ROUTINE_FRAME_NOTES = /^(Preview pending|Preview unavailable|Waiting for an authorized preview\.|Not previewed: |Preview released |Controller restarted|This computer has no display yet\.|ibara dropped a picture |BUDGET_EXCEEDED\b|Busy · picture is late$)/
 
 function fleetState(session) {
   var state = computerState(session)

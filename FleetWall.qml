@@ -646,15 +646,25 @@ Item {
               height: tagRow.implicitHeight + Style.space(8)
               radius: 0
               color: Qt.alpha(Color.popups.background, 0.88)
-              Row {
+              Column {
                 id: tagRow
                 anchors.centerIn: parent
-                spacing: Style.space(7)
-                StateMarker { tokens: root.tokens; fleetState: cell.shownState; anchors.verticalCenter: parent.verticalCenter }
+                spacing: Style.space(2)
+                Row {
+                  spacing: Style.space(7)
+                  StateMarker { tokens: root.tokens; fleetState: cell.shownState; anchors.verticalCenter: parent.verticalCenter }
+                  Copy {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: cell.connecting ? "Connecting…" : ((root.service ? root.service.turnWords(cell.computerId) : "") || root.tokens.stateLabel(cell.shownState, cell.computer)) + (cell.computer.version ? " · ibara " + cell.computer.version : "")
+                    color: root.tokens.textTint(root.tokens.stateColor(cell.shownState))
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+                // A late picture, over the last one.
                 Copy {
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: cell.connecting ? "Connecting…" : ((root.service ? root.service.turnWords(cell.computerId) : "") || root.tokens.stateLabel(cell.shownState, cell.computer)) + (cell.computer.version ? " · ibara " + cell.computer.version : "")
-                  color: root.tokens.textTint(root.tokens.stateColor(cell.shownState))
+                  visible: preview.hasFrame && !!cell.computer && cell.computer.frame_error === StatusModel.PICTURE_LATE
+                  text: StatusModel.PICTURE_LATE
+                  dimmed: true
                   font.pixelSize: Style.font.bodySmall
                 }
               }
@@ -666,7 +676,7 @@ Item {
               anchors.margins: Style.space(8)
               visible: !!root.favorites[cell.computerId]
               width: star.implicitWidth + Style.space(12)
-              height: tagRow.implicitHeight + Style.space(8)
+              height: star.implicitHeight + Style.space(8)
               radius: 0
               color: Qt.alpha(Color.popups.background, 0.88)
               Copy { id: star; anchors.centerIn: parent; text: "★"; font.pixelSize: Style.font.bodySmall; Accessible.ignored: true }
