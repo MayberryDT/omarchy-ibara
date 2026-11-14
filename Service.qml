@@ -4270,8 +4270,9 @@ Item {
             files_access: ["available_if_root_approved", "denied"].indexOf(String(authenticated.files || "")) !== -1 ? String(authenticated.files) : "",
             display_id: displayId,
             frame: displayId === identity.display_id ? identity.frame : null,
+            // Back from a refusal or from Offline, what its picture said then no longer holds.
             frame_error: !displayId ? (outputs.length ? "Choose a display on this computer's Screen tab." : noDisplayNotice)
-              : displayId === identity.display_id ? (identity.connection === "unauthorized" ? "Preview pending" : identity.frame_error) : "Preview pending",
+              : displayId === identity.display_id ? (["unauthorized", "offline"].indexOf(identity.connection) !== -1 ? "Preview pending" : identity.frame_error) : "Preview pending",
             // Paused by a person waits for Resume; paused by ibara itself resumes on its own.
             paused: authenticated.paused === true,
             pause_origin: ["person", "system"].indexOf(authenticated.pause_origin) !== -1 ? authenticated.pause_origin : null,
