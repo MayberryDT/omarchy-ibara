@@ -6,7 +6,14 @@
     "brief_outage_never_offline": true,
     "brief_outage_recovers": true,
     "build_kept_from_status": true,
+    "closed_back_from_offline_reads_ready": true,
+    "closed_brief_outage_had_failed_read": true,
+    "closed_brief_outage_never_a_problem": true,
+    "closed_brief_outage_never_offline": true,
+    "closed_brief_outage_recovers": true,
+    "closed_long_outage_goes_offline_and_back": true,
     "daemon_failed_3_reads_over_30s_before_offline": true,
+    "daemon_failed_3_session_reads_over_30s_before_offline": true,
     "denied_fails_closed": true,
     "denied_never_offline": true,
     "different_build_flagged": true,
@@ -39,388 +46,607 @@
     "revoked_never_offline": true,
     "same_build_not_flagged": true,
     "silent_picture_keeps_last_frame_with_note": true,
+    "start_unanswered_connects_once_answered": true,
+    "start_unanswered_goes_offline": true,
+    "start_unanswered_shows_connecting": true,
     "timed_out_picture_keeps_last_frame_with_note": true,
     "version_kept_from_status": true
   },
   "failed": [],
   "marks": {
-    "brief_outage_end_ms": 1794690233120,
-    "long_back_ms": 1794690381120,
-    "long_back_unanswered": 0,
-    "long_offline_ms": 1794690271119,
-    "long_offline_unanswered": 4,
-    "long_outage_end_ms": 1794690356120,
-    "long_problem_after_back": false,
-    "long_problem_heading": "FICTIONAL 08 isn't answering",
-    "long_problem_ms": 1794690332120,
-    "max_healthy_picture_age_s": 5,
-    "max_late_lanes": 1,
-    "polled_00_at_60": 1794690253122,
-    "polled_01_at_60": 1794690252122,
-    "polled_07_at_offline": 1794690270122,
-    "trouble_ms": 1794690221120
+    "closed": {
+      "brief_end_ms": 1794691971900,
+      "brief_start_ms": 1794691941900,
+      "long_back_ms": 1794692012901,
+      "long_offline_ms": 1794691937900,
+      "start_back_ms": 1794691997900,
+      "start_ms": 1794691892900,
+      "start_offline_ms": 1794691922899,
+      "start_outage_end_ms": 1794691986900
+    },
+    "fixture": {
+      "brief_outage_end_ms": 1794691683466,
+      "long_back_ms": 1794691812466,
+      "long_back_unanswered": 0,
+      "long_offline_ms": 1794691717465,
+      "long_offline_unanswered": 4,
+      "long_outage_end_ms": 1794691806466,
+      "long_problem_after_back": false,
+      "long_problem_heading": "FICTIONAL 08 isn't answering",
+      "long_problem_ms": 1794691777466,
+      "max_backoff_fictional-00": 24000,
+      "max_backoff_fictional-01": 48000,
+      "max_backoff_fictional-02": 48000,
+      "max_healthy_picture_age_s": 5,
+      "max_late_lanes": 1,
+      "polled_00_at_60": 1794691702469,
+      "polled_01_at_60": 1794691701469,
+      "polled_07_at_offline": 1794691716469,
+      "trouble_ms": 1794691671466
+    }
   },
   "passed": true,
   "qml_errors": [],
-  "service_sha256": "bc49e837efeb3c09b9e4af40909fe2a8587d19147b49460c99aa570cd1d15af0",
+  "service_sha256": "00f4ead821e66c0a589477c949784e2b33bf16c61bf60a3c8566885bc3b5695b",
   "status_model_sha256": "9e6eb4a1d78f5e25158df52bc9c5876e50bdfbd66fdbf2fce2700dc84028cecd",
-  "timeline": [
-    {
-      "computer": "fictional-00",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-01",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-02",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Preview pending",
-      "picture": false,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-04",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-06",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
-      "picture": false,
-      "problem": false,
-      "state": "attention",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "control": {
-        "hang": [
-          "fictional-01"
-        ],
-        "offline": [
-          "fictional-03",
-          "fictional-07"
-        ],
-        "picture_silent": [
-          "fictional-02",
-          "fictional-00"
-        ]
+  "timeline": {
+    "closed": [
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 1,
+        "unanswered": 0
       },
-      "t": 15
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 16,
-      "unanswered": 1
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 19,
-      "unanswered": 1
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 19,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 21,
-      "unanswered": 2
-    },
-    {
-      "computer": "fictional-02",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": false,
-      "problem": false,
-      "state": "ready",
-      "t": 25,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 26,
-      "unanswered": 3
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 26,
-      "unanswered": 1
-    },
-    {
-      "control": {
-        "offline": [
-          "fictional-07"
-        ]
+      {
+        "computer": "fictional-08",
+        "connection": "loading",
+        "note": "Preview unavailable",
+        "picture": false,
+        "state": "connecting",
+        "t": 1,
+        "unanswered": 1
       },
-      "t": 27
-    },
-    {
-      "computer": "fictional-01",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 29,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 31,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 32,
-      "unanswered": 2
-    },
-    {
-      "computer": "fictional-00",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 40,
-      "unanswered": 0
-    },
-    {
-      "control": {
-        "revoked": [
-          "fictional-05"
-        ]
+      {
+        "computer": "fictional-09",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 1,
+        "unanswered": 0
       },
-      "t": 40
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "ready",
-      "group": "ready",
-      "note": "clearWatchAcknowledgment is not defined",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 44,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Busy \u00b7 picture is late",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 44,
-      "unanswered": 3
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
-      "picture": false,
-      "problem": false,
-      "state": "attention",
-      "t": 47,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 49,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-06",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
-      "picture": false,
-      "problem": true,
-      "state": "attention",
-      "t": 61,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "offline",
-      "group": "attention",
-      "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 65,
-      "unanswered": 4
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "offline",
-      "group": "attention",
-      "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 103,
-      "unanswered": 5
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
-      "picture": false,
-      "problem": true,
-      "state": "attention",
-      "t": 107,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "offline",
-      "group": "attention",
-      "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
-      "picture": true,
-      "problem": true,
-      "state": "offline",
-      "t": 126,
-      "unanswered": 5
-    },
-    {
-      "control": {
-        "offline": []
+      {
+        "control": {
+          "offline": [
+            "fictional-08",
+            "fictional-07"
+          ]
+        },
+        "t": 10
       },
-      "t": 150
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 175,
-      "unanswered": 0
-    }
-  ]
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 16,
+        "unanswered": 1
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "loading",
+        "note": "Preview unavailable",
+        "picture": false,
+        "state": "connecting",
+        "t": 16,
+        "unanswered": 2
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 31,
+        "unanswered": 2
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "offline",
+        "note": "FICTIONAL 09 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 31,
+        "unanswered": 3
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 46,
+        "unanswered": 3
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "offline",
+        "note": "FICTIONAL 09 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 46,
+        "unanswered": 4
+      },
+      {
+        "control": {
+          "offline": [
+            "fictional-08",
+            "fictional-07",
+            "fictional-09"
+          ]
+        },
+        "t": 50
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "offline",
+        "note": "FICTIONAL 09 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 61,
+        "unanswered": 6
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 76,
+        "unanswered": 4
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "offline",
+        "note": "FICTIONAL 09 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 76,
+        "unanswered": 7
+      },
+      {
+        "computer": "fictional-09",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 76,
+        "unanswered": 1
+      },
+      {
+        "control": {
+          "offline": [
+            "fictional-08"
+          ]
+        },
+        "t": 80
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "offline",
+        "note": "FICTIONAL 09 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 91,
+        "unanswered": 8
+      },
+      {
+        "computer": "fictional-09",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 91,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "offline": []
+        },
+        "t": 95
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 106,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 121,
+        "unanswered": 0
+      }
+    ],
+    "fixture": [
+      {
+        "computer": "fictional-00",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-01",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-02",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-04",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-06",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
+        "picture": false,
+        "problem": false,
+        "state": "attention",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "hang": [
+            "fictional-01"
+          ],
+          "offline": [
+            "fictional-03",
+            "fictional-07"
+          ],
+          "picture_silent": [
+            "fictional-02",
+            "fictional-00"
+          ]
+        },
+        "t": 15
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 16,
+        "unanswered": 1
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 19,
+        "unanswered": 1
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 19,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 21,
+        "unanswered": 2
+      },
+      {
+        "computer": "fictional-02",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": false,
+        "problem": false,
+        "state": "ready",
+        "t": 25,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 26,
+        "unanswered": 3
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 26,
+        "unanswered": 1
+      },
+      {
+        "control": {
+          "offline": [
+            "fictional-07"
+          ]
+        },
+        "t": 27
+      },
+      {
+        "computer": "fictional-01",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 29,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 31,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 32,
+        "unanswered": 2
+      },
+      {
+        "computer": "fictional-00",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 40,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "revoked": [
+            "fictional-05"
+          ]
+        },
+        "t": 40
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Busy \u00b7 picture is late",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 41,
+        "unanswered": 3
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "ready",
+        "group": "ready",
+        "note": "clearWatchAcknowledgment is not defined",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 44,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
+        "picture": false,
+        "problem": false,
+        "state": "attention",
+        "t": 46,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 49,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-06",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
+        "picture": false,
+        "problem": true,
+        "state": "attention",
+        "t": 61,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "group": "attention",
+        "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 61,
+        "unanswered": 4
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "group": "attention",
+        "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 96,
+        "unanswered": 5
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
+        "picture": false,
+        "problem": true,
+        "state": "attention",
+        "t": 106,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "group": "attention",
+        "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
+        "picture": true,
+        "problem": true,
+        "state": "offline",
+        "t": 121,
+        "unanswered": 5
+      },
+      {
+        "control": {
+          "offline": []
+        },
+        "t": 150
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Preview pending",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 156,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 157,
+        "unanswered": 0
+      }
+    ]
+  }
 }

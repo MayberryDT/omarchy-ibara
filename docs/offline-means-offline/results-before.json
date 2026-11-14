@@ -6,7 +6,14 @@
     "brief_outage_never_offline": false,
     "brief_outage_recovers": true,
     "build_kept_from_status": false,
+    "closed_back_from_offline_reads_ready": false,
+    "closed_brief_outage_had_failed_read": true,
+    "closed_brief_outage_never_a_problem": false,
+    "closed_brief_outage_never_offline": false,
+    "closed_brief_outage_recovers": false,
+    "closed_long_outage_goes_offline_and_back": true,
     "daemon_failed_3_reads_over_30s_before_offline": false,
+    "daemon_failed_3_session_reads_over_30s_before_offline": false,
     "denied_fails_closed": true,
     "denied_never_offline": true,
     "different_build_flagged": false,
@@ -39,13 +46,21 @@
     "revoked_never_offline": true,
     "same_build_not_flagged": false,
     "silent_picture_keeps_last_frame_with_note": false,
+    "start_unanswered_connects_once_answered": true,
+    "start_unanswered_goes_offline": true,
+    "start_unanswered_shows_connecting": false,
     "timed_out_picture_keeps_last_frame_with_note": false,
     "version_kept_from_status": true
   },
   "failed": [
     "brief_outage_never_offline",
     "build_kept_from_status",
+    "closed_back_from_offline_reads_ready",
+    "closed_brief_outage_never_a_problem",
+    "closed_brief_outage_never_offline",
+    "closed_brief_outage_recovers",
     "daemon_failed_3_reads_over_30s_before_offline",
+    "daemon_failed_3_session_reads_over_30s_before_offline",
     "different_build_flagged",
     "different_version_flagged",
     "fictional-00_late_never_a_problem",
@@ -67,375 +82,489 @@
     "offline_status_still_read",
     "same_build_not_flagged",
     "silent_picture_keeps_last_frame_with_note",
+    "start_unanswered_shows_connecting",
     "timed_out_picture_keeps_last_frame_with_note"
   ],
   "marks": {
-    "brief_outage_end_ms": 1794689272662,
-    "long_back_ms": 1794689448663,
-    "long_back_unanswered": 0,
-    "long_offline_ms": 1794689264662,
-    "long_offline_unanswered": 0,
-    "long_outage_end_ms": 1794689395662,
-    "long_problem_after_back": false,
-    "long_problem_heading": "FICTIONAL 08 isn't answering",
-    "long_problem_ms": 1794689325662,
-    "max_healthy_picture_age_s": 5,
-    "max_late_lanes": 1,
-    "polled_00_at_60": 1794689270665,
-    "polled_01_at_60": 1794689270665,
-    "polled_07_at_offline": 1794689249666,
-    "trouble_ms": 1794689260662
+    "closed": {
+      "brief_end_ms": 1794691964679,
+      "brief_start_ms": 1794691934680,
+      "long_back_ms": 1794692005679,
+      "long_offline_ms": 1794691900682,
+      "start_back_ms": 1794691990680,
+      "start_ms": 1794691885680,
+      "start_offline_ms": 1794691885680,
+      "start_outage_end_ms": 1794691979680
+    },
+    "fixture": {
+      "brief_outage_end_ms": 1794691676259,
+      "long_back_ms": 1794691851259,
+      "long_back_unanswered": 0,
+      "long_offline_ms": 1794691668258,
+      "long_offline_unanswered": 0,
+      "long_outage_end_ms": 1794691799259,
+      "long_problem_after_back": false,
+      "long_problem_heading": "FICTIONAL 08 isn't answering",
+      "long_problem_ms": 1794691729258,
+      "max_backoff_fictional-00": 48000,
+      "max_backoff_fictional-01": 48000,
+      "max_backoff_fictional-02": 48000,
+      "max_healthy_picture_age_s": 5,
+      "max_late_lanes": 1,
+      "polled_00_at_60": 1794691674261,
+      "polled_01_at_60": 1794691673261,
+      "polled_07_at_offline": 1794691653261,
+      "trouble_ms": 1794691664259
+    }
   },
   "passed": false,
   "qml_errors": [],
   "service_sha256": "06b070db60c144097102ecc7a7a542aeaa8adafc49a64fc58ce9efe9e38121c5",
   "status_model_sha256": "b5004c356c4e9ec56335ba48b0562a56d28c448c21cb1fb1bd70297a4da208c0",
-  "timeline": [
-    {
-      "computer": "fictional-00",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-01",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-02",
-      "connection": "ready",
-      "group": "ready",
-      "note": "Preview pending",
-      "picture": false,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-04",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-06",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
-      "picture": false,
-      "problem": false,
-      "state": "attention",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 4,
-      "unanswered": 0
-    },
-    {
-      "control": {
-        "hang": [
-          "fictional-01"
-        ],
-        "offline": [
-          "fictional-03",
-          "fictional-07"
-        ],
-        "picture_silent": [
-          "fictional-02",
-          "fictional-00"
-        ]
+  "timeline": {
+    "closed": [
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 1,
+        "unanswered": 0
       },
-      "t": 15
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "offline",
-      "group": "attention",
-      "note": "FICTIONAL 04 isn't answering. ibara will keep trying.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 16,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "offline",
-      "group": "attention",
-      "note": "Selected operator transport closed.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 19,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "offline",
-      "group": "attention",
-      "note": "Selected operator transport closed.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 19,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "offline",
-      "group": "attention",
-      "note": "FICTIONAL 04 isn't answering. ibara will keep trying.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 21,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "offline",
-      "group": "attention",
-      "note": "Selected operator transport closed.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 24,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-02",
-      "connection": "offline",
-      "group": "attention",
-      "note": "The computer didn't send a picture in time. ibara will keep trying.",
-      "picture": false,
-      "problem": false,
-      "state": "offline",
-      "t": 25,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "offline",
-      "group": "attention",
-      "note": "FICTIONAL 04 isn't answering. ibara will keep trying.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 26,
-      "unanswered": 0
-    },
-    {
-      "control": {
-        "offline": [
-          "fictional-07"
-        ]
+      {
+        "computer": "fictional-08",
+        "connection": "offline",
+        "note": "FICTIONAL 09 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 1,
+        "unanswered": 0
       },
-      "t": 27
-    },
-    {
-      "computer": "fictional-01",
-      "connection": "offline",
-      "group": "attention",
-      "note": "Selected operator transport timed out.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 29,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "FICTIONAL 04 isn't answering. ibara will keep trying.",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 31,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-03",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 32,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-00",
-      "connection": "offline",
-      "group": "attention",
-      "note": "The computer didn't send a picture in time. ibara will keep trying.",
-      "picture": true,
-      "problem": false,
-      "state": "offline",
-      "t": 40,
-      "unanswered": 0
-    },
-    {
-      "control": {
-        "revoked": [
-          "fictional-05"
-        ]
+      {
+        "computer": "fictional-09",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 1,
+        "unanswered": 0
       },
-      "t": 40
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "ready",
-      "group": "ready",
-      "note": "clearWatchAcknowledgment is not defined",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 44,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
-      "picture": false,
-      "problem": false,
-      "state": "attention",
-      "t": 46,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-06",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
-      "picture": false,
-      "problem": true,
-      "state": "attention",
-      "t": 61,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "offline",
-      "group": "attention",
-      "note": "Selected operator transport closed.",
-      "picture": true,
-      "problem": true,
-      "state": "offline",
-      "t": 80,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-02",
-      "connection": "offline",
-      "group": "attention",
-      "note": "The computer didn't send a picture in time. ibara will keep trying.",
-      "picture": false,
-      "problem": true,
-      "state": "offline",
-      "t": 85,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-01",
-      "connection": "offline",
-      "group": "attention",
-      "note": "Selected operator transport timed out.",
-      "picture": true,
-      "problem": true,
-      "state": "offline",
-      "t": 90,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-00",
-      "connection": "offline",
-      "group": "attention",
-      "note": "The computer didn't send a picture in time. ibara will keep trying.",
-      "picture": true,
-      "problem": true,
-      "state": "offline",
-      "t": 101,
-      "unanswered": 0
-    },
-    {
-      "computer": "fictional-05",
-      "connection": "unauthorized",
-      "group": "attention",
-      "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
-      "picture": false,
-      "problem": true,
-      "state": "attention",
-      "t": 106,
-      "unanswered": 0
-    },
-    {
-      "control": {
-        "offline": []
+      {
+        "control": {
+          "offline": [
+            "fictional-08",
+            "fictional-07"
+          ]
+        },
+        "t": 10
       },
-      "t": 150
-    },
-    {
-      "computer": "fictional-07",
-      "connection": "ready",
-      "group": "ready",
-      "note": "",
-      "picture": true,
-      "problem": false,
-      "state": "ready",
-      "t": 203,
-      "unanswered": 0
-    }
-  ]
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 16,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "offline": [
+            "fictional-08",
+            "fictional-07",
+            "fictional-09"
+          ]
+        },
+        "t": 50
+      },
+      {
+        "computer": "fictional-09",
+        "connection": "offline",
+        "note": "FICTIONAL 10 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "offline",
+        "t": 76,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "offline": [
+            "fictional-08"
+          ]
+        },
+        "t": 80
+      },
+      {
+        "computer": "fictional-09",
+        "connection": "ready",
+        "note": "FICTIONAL 10 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "attention",
+        "t": 91,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "offline": []
+        },
+        "t": 95
+      },
+      {
+        "computer": "fictional-08",
+        "connection": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "state": "ready",
+        "t": 106,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "note": "FICTIONAL 08 isn't answering. ibara will keep trying.",
+        "picture": false,
+        "state": "attention",
+        "t": 121,
+        "unanswered": 0
+      }
+    ],
+    "fixture": [
+      {
+        "computer": "fictional-00",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-01",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-02",
+        "connection": "ready",
+        "group": "ready",
+        "note": "Preview pending",
+        "picture": false,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-04",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-06",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
+        "picture": false,
+        "problem": false,
+        "state": "attention",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 4,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "hang": [
+            "fictional-01"
+          ],
+          "offline": [
+            "fictional-03",
+            "fictional-07"
+          ],
+          "picture_silent": [
+            "fictional-02",
+            "fictional-00"
+          ]
+        },
+        "t": 15
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "offline",
+        "group": "attention",
+        "note": "FICTIONAL 04 isn't answering. ibara will keep trying.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 16,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "offline",
+        "group": "attention",
+        "note": "Selected operator transport closed.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 19,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "group": "attention",
+        "note": "Selected operator transport closed.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 19,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "offline",
+        "group": "attention",
+        "note": "FICTIONAL 04 isn't answering. ibara will keep trying.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 21,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "offline",
+        "group": "attention",
+        "note": "Selected operator transport closed.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 24,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-02",
+        "connection": "offline",
+        "group": "attention",
+        "note": "The computer didn't send a picture in time. ibara will keep trying.",
+        "picture": false,
+        "problem": false,
+        "state": "offline",
+        "t": 25,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "offline",
+        "group": "attention",
+        "note": "FICTIONAL 04 isn't answering. ibara will keep trying.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 26,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "offline": [
+            "fictional-07"
+          ]
+        },
+        "t": 27
+      },
+      {
+        "computer": "fictional-01",
+        "connection": "offline",
+        "group": "attention",
+        "note": "Selected operator transport timed out.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 29,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-03",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 31,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-00",
+        "connection": "offline",
+        "group": "attention",
+        "note": "The computer didn't send a picture in time. ibara will keep trying.",
+        "picture": true,
+        "problem": false,
+        "state": "offline",
+        "t": 40,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "revoked": [
+            "fictional-05"
+          ]
+        },
+        "t": 40
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "ready",
+        "group": "ready",
+        "note": "clearWatchAcknowledgment is not defined",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 44,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
+        "picture": false,
+        "problem": false,
+        "state": "attention",
+        "t": 46,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-06",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "This computer doesn't let you watch its screen. Its Access tab shows who can.",
+        "picture": false,
+        "problem": true,
+        "state": "attention",
+        "t": 61,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "offline",
+        "group": "attention",
+        "note": "Selected operator transport closed.",
+        "picture": true,
+        "problem": true,
+        "state": "offline",
+        "t": 80,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-02",
+        "connection": "offline",
+        "group": "attention",
+        "note": "The computer didn't send a picture in time. ibara will keep trying.",
+        "picture": false,
+        "problem": true,
+        "state": "offline",
+        "t": 85,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-01",
+        "connection": "offline",
+        "group": "attention",
+        "note": "Selected operator transport timed out.",
+        "picture": true,
+        "problem": true,
+        "state": "offline",
+        "t": 90,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-00",
+        "connection": "offline",
+        "group": "attention",
+        "note": "The computer didn't send a picture in time. ibara will keep trying.",
+        "picture": true,
+        "problem": true,
+        "state": "offline",
+        "t": 101,
+        "unanswered": 0
+      },
+      {
+        "computer": "fictional-05",
+        "connection": "unauthorized",
+        "group": "attention",
+        "note": "FICTIONAL 06 closed the connection; your access may have changed. ibara will check again.",
+        "picture": false,
+        "problem": true,
+        "state": "attention",
+        "t": 106,
+        "unanswered": 0
+      },
+      {
+        "control": {
+          "offline": []
+        },
+        "t": 150
+      },
+      {
+        "computer": "fictional-07",
+        "connection": "ready",
+        "group": "ready",
+        "note": "",
+        "picture": true,
+        "problem": false,
+        "state": "ready",
+        "t": 202,
+        "unanswered": 0
+      }
+    ]
+  }
 }
