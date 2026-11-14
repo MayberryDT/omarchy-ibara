@@ -36,6 +36,16 @@ keep holding after it.
 17. (guard) A refused computer (denied, revoked) is shown as late or Offline instead of failing
     closed: its picture must clear and it must read as access not confirmed.
 
+With nothing open (`closed.qml`: the bar's own polling, once a minute and on every refresh):
+
+24. One failed status read marks a computer Offline.
+25. A computer that doesn't answer its first session read shows Offline at once, instead of
+    Connecting until three reads in a row over at least 30 s have gone unanswered.
+26. That computer never goes Offline, or doesn't connect once it answers.
+27. A computer that comes back after being Offline keeps "isn't answering" as its picture note;
+    with no picture to replace it (nothing open shows pictures) it reads Needs Attention, and the
+    bar turns red a minute after it came back.
+
 ## Version drift is visible
 
 18. (guard) A computer's version from its status is not kept.

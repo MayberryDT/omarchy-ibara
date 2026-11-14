@@ -102,8 +102,15 @@ ShellRoot {
       }
       if (t === 110) {
         lab.check("late_picture_status_still_read", lab.polled("fictional-00") > lab.marks.polled_00_at_60 && lab.polled("fictional-01") > lab.marks.polled_01_at_60)
-        lab.check("late_pictures_back_off", ["fictional-00", "fictional-01", "fictional-02"].every(function(id) { return !!svc.previewBackoff[id] && svc.previewBackoff[id].delay >= 6000 }))
       }
+      // A late computer is never asked for a picture again before its backoff ends, and its
+      // backoff doubles. They take turns on one lane, so each gets a turn every 30–60 s.
+      if (t >= 15) ["fictional-00", "fictional-01", "fictional-02"].forEach(function(id) {
+        var b = svc.previewBackoff[id]
+        if (!b) return
+        lab.marks["max_backoff_" + id] = Math.max(lab.marks["max_backoff_" + id] || 0, b.delay)
+        lab.flag(id + "_asked_during_backoff", svc.previewActive.some(function(r) { return !!r && r.computer_id === id && r.dispatched_ms < b.until }))
+      })
       // At most one picture lane for the late computers, once each has been late.
       if (t >= 50 && t <= 130) {
         var slow = svc.previewActive.filter(function(r) { return !!r && ["fictional-00", "fictional-01", "fictional-02"].indexOf(r.computer_id) !== -1 }).length
@@ -143,6 +150,7 @@ ShellRoot {
           lab.check(id + "_late_never_a_problem", !lab.flags[id + "_problem"])
         })
         lab.check("late_pictures_share_one_lane", lab.marks.max_late_lanes <= 1)
+        lab.check("late_pictures_back_off", ["fictional-00", "fictional-01", "fictional-02"].every(function(id) { return !lab.flags[id + "_asked_during_backoff"] && lab.marks["max_backoff_" + id] >= 6000 }))
         lab.check("healthy_pictures_keep_coming", lab.marks.max_healthy_picture_age_s <= 15)
         lab.check("brief_outage_never_offline", !lab.flags["fictional-03_offline"])
         lab.check("long_outage_goes_offline", !!lab.marks.long_offline_ms)
