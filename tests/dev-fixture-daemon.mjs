@@ -273,6 +273,8 @@ function observe(request, sequences, send) {
   if (option('--epoch') !== currentEpoch(computer)) return write(refused(id, 'operator-observe', 'PERMISSION_DENIED: Target binding changed.'), 'stale-epoch');
   const epoch = currentEpoch(computer);
   const state = control();
+  // picture_silent: taken and never answered, like a capture stuck on a busy computer.
+  if (listed('picture_silent', computer)) return;
   if (listed('hang', computer)) return setTimeout(() => write(refused(id, 'operator-observe', 'Selected operator transport timed out.'), 'timeout'), 10000);
   const samples = profile[quality] || [[0,0]];
   const [roundTrip, arrivalAge] = samples[Math.floor(Math.random() * samples.length)];
@@ -852,6 +854,9 @@ const EPOCH_COMMANDS = new Set(['operator-status','operator-tasks','operator-tas
 const SCOPED_READS = new Set(['operator-tasks','operator-task','operator-artifacts','operator-procedures','operator-procedure','operator-access','operator-logs','operator-health','operator-windows']);
 const POWER_ACTIONS = ['restart','shutdown','sleep','lock','update_ibara','update_omarchy'];
 const FICTIONAL_IBARA = '0.1.0-40';
+// The ibara version each computer's status reports (control.json `version`, or `versions` by ID),
+// and its build when control.json names one (`build`, or `builds` by ID).
+const versionOf = id => { const c = control(), build = c.builds?.[id] ?? c.build; return {version:c.versions?.[id] ?? c.version ?? FICTIONAL_IBARA, ...(build ? {build} : {})}; };
 
 // Every other command: the envelope the fictional wall gives.
 function answer(request) {
@@ -966,7 +971,7 @@ function answer(request) {
     const outputs = denied ? [] : Array.from({length:displayCount}, (_, n) => ({display_id:n ? `fictional-display-${n + 1}` : 'fictional-display',display_revision:'fictional-1',label:n ? `Fictional screen ${n + 1}` : 'Fictional screen'}));
     return opReply(requestId, command, id, {observation:denied?'denied':'available_if_desktop_ready',active_task_ref:activeTask?activeTask.task_ref:null,active_task:activeTask,outputs,files:fleet?'available_if_root_approved':'denied',owner,ownership_revision:ownershipRevision(id, owner),interactive_control:fleet?'available_if_exclusive':'unsupported_without_verified_viewer_adapter',holds_control:controls.has(id),locked:lockedNow(id),
       paused:!!pause,pause_origin:pause,system_wait:pause === 'system' ? (listed('resume_off', id) ? 'resume_off' : 'starting') : null,
-      repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),omarchy_update:omarchyOf(id),
+      repair:repairView(id),wake:wakeOf(id),disk_password:listed('disk_password', id),last_task:denied ? null : lastTaskOf(m),omarchy_update:omarchyOf(id),...versionOf(id),
       video:listed('video_incapable', id) ? {capable:false,reason:"This computer can't stream video efficiently."} : {capable:true,reason:null}});
   }
   if (pauseOp) {
@@ -1168,6 +1173,11 @@ function serveConnection(socket) {
       try { envelope = answer(request); }
       catch (error) { envelope = respond(String(request.id || ''), command, null, {code:'COMMAND_FAILED',message:String(error?.message || error),retry_safe:false}, 'failed'); }
       if (process.env.IBARA_DEV_TRACE && !/^(operator-|preview-)/.test(command)) process.stderr.write(`TRACE ${request.id} ${command} ${JSON.stringify(request.args)} -> ${JSON.stringify(envelope.data)} ${JSON.stringify(envelope.error)}\n`);
+      // Each session and status read and whether it was answered, beside requests.jsonl.
+      if (command === 'operator-status' || command === 'operator-session') {
+        const args = Array.isArray(request.args) ? request.args.map(String) : [];
+        fs.appendFileSync(path.join(runtime, 'status.jsonl'), JSON.stringify({at_ms:Date.now(), command, computer:args[args.indexOf('--computer') + 1] || '', answered:!envelope.error, error:envelope.error ? envelope.error.message : null}) + '\n');
+      }
       send({id:String(request.id || ''), envelope});
     };
     // A slow command's effect lands when its answer does.
