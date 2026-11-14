@@ -56,6 +56,10 @@ Nothing ever sits between a page's header and its content. Every message is a to
 
 Previews keep the last decoded frame on screen until the next one is ready. A refresh does not rebuild the cards or blank a preview. An offline computer shows its last frame grayed. Revoked or unauthorized computers clear it. At most 20 computers preview at once; the others say why.
 
+A picture that doesn't come within 20 s, or whose route times out or closes, is late: the last frame stays, with "Busy · picture is late" under the state on the card and on the Screen tab (or in its place while there is no picture yet). The computer keeps its state, its place in the wall's groups and the bar's color, and no toast says it isn't answering. Its pictures back off, 3 s doubling to 60 s, and computers whose pictures are late share one of the four picture lanes. Only status reads make a computer **Offline**: three in a row unanswered (each gives up after 10–15 s), the first at least 30 s before. One answered status, or one picture, brings it back at once. While the console is open an Offline computer's status is still read, on its retry: 5 s, doubling to 60 s.
+
+Each card's tag shows the ibara version its status reports. A computer on another version or build than most of the fleet says so under it, in the paused color: "Others run ibara 0.3.6-1", or "Others run another build" when only the build differs. When versions tie, the newest is the fleet's; when as many computers run two builds of one version, no build is the fleet's and each of them says "Others run another build". Its System tab shows its own version and build ("ibara 0.3.6-1 · build 9f8e7d6") and names the fleet's: "Others run build 1a2b3c4" or "Others run ibara 0.3.6-1 · build 1a2b3c4". The build comes from `operator-status` `build`, an optional field: from a core that doesn't send it, versions alone are compared and no build shows.
+
 ### Files
 
 Choose File… opens the desktop file chooser outside the shell. The file keeps its name unless you change it under Save as. Send to <computer> puts it in the computer's approved folder that is shown on the right; nothing there is overwritten. Transfers show progress, then "checked" only after the receipt is verified. A failed send retries by resuming its retained job, never by sending again.
@@ -166,7 +170,7 @@ summon/hide/toggle uses the same plugin id; the payload `{"route":"settings"}`
 opens Settings.
 
 Default polling: 15s hidden, 5s while the panel is open, immediate on open and
-after mutations, backoff to 60s when offline; approvals every 10 s. While the
+after mutations; a computer whose status went unanswered is read again 5 s later, doubling to 60 s, and is Offline after three unanswered reads over at least 30 s; approvals every 10 s. While the
 panel is open, each computer in view where an agent works, a person has control,
 agents are paused or something needs you re-reads its status about every second
 (at most eight a second, and for 10 s after it settles, so Done shows at once),

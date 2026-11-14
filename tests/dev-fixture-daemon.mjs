@@ -51,10 +51,11 @@ const fleet = wallCount === 15;
 const member = id => fleet && /^fictional-/.test(id) && valid(id) ? FLEET[Number(id.slice(10))] : null;
 const hostOf = id => member(id) ? member(id).name.toLowerCase() : 'fictional-only';
 const taskRefOf = id => `task_${hostOf(id)}_live`;
-// control.json simulates independent endpoint conditions: deny, offline, hang, revoked,
+// control.json simulates independent endpoint conditions: deny, offline, hang, picture_silent, revoked,
 // epoch (a controller restart), displays ({computer_id: count}, default 1),
 // scoped_delay_ms (every per-computer read of tasks, results, access, logs, health and windows for one
-// computer answers that much later, as a slow computer does) and one delayed "late" reply.
+// computer answers that much later, as a slow computer does), one delayed "late" reply, and the
+// version and build operator-status reports (version/versions, build/builds; see versionOf).
 // Runtime files live beside the socket, outside the plugin folder, because the shell
 // hot-reloads a plugin when its files change.
 const runtime = path.dirname(socketPath);
