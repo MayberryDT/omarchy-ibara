@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 //  5. A computer with no version yet counts toward the fleet build, or is flagged.
 //  6. A tie depends on the order the computers come in, instead of taking the newest version.
 //  7. A computer that sends no build beside ones that do, on the same version, is not flagged.
+//  8. As many computers on one build of a version as on another (no build is the fleet's): one
+//     side is picked by its build's name and the other flagged, instead of flagging both.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'StatusModel.js'), 'utf8').replace('.pragma library', '');
 const context = {};
@@ -42,6 +44,7 @@ test('a computer on another version is flagged with the version the others run',
   const odd = pc('0.3.4-1'), fleet = [pc('0.3.6-1'), odd, pc('0.3.6-1')];
   const ref = M.fleetBuild(fleet);
   assert.equal(M.driftWords(odd, ref), 'Others run ibara 0.3.6-1');
+  assert.equal(M.driftWords(odd, ref, true), 'Others run ibara 0.3.6-1');
   assert.deepEqual(fleet.filter(c => c !== odd).map(c => M.driftWords(c, ref)), ['', '']);
 });
 
@@ -49,8 +52,11 @@ test('the same version on another build is flagged as another build, not another
   const odd = pc('0.3.6-1', '9f8e7d6'), fleet = [pc('0.3.6-1', '1a2b3c4'), pc('0.3.6-1', '1a2b3c4'), odd];
   const ref = M.fleetBuild(fleet);
   assert.deepEqual(plain(ref), { version: '0.3.6-1', build: '1a2b3c4' });
-  assert.equal(M.driftWords(odd, ref), 'Others run another build of 0.3.6-1');
+  assert.equal(M.driftWords(odd, ref), 'Others run another build');
   assert.equal(M.driftWords(fleet[0], ref), '');
+  // In detail (the System tab), the fleet's build is named.
+  assert.equal(M.driftWords(odd, ref, true), 'Others run build 1a2b3c4');
+  assert.equal(M.driftWords(pc('0.3.4-1', 'ccccccc'), ref, true), 'Others run ibara 0.3.6-1 · build 1a2b3c4');
 });
 
 test('a computer with no version yet neither counts nor is flagged', () => {
@@ -66,7 +72,19 @@ test('a tie takes the newest version, whatever order the computers come in', () 
   assert.deepEqual(plain(M.fleetBuild(builds)), plain(M.fleetBuild(builds.slice().reverse())));
 });
 
+test('as many computers on two builds of one version flags all of them, naming no build', () => {
+  const fleet = [pc('0.3.6-1', 'bbbbbbb'), pc('0.3.6-1', 'aaaaaaa'), pc('0.3.6-1', 'bbbbbbb'), pc('0.3.6-1', 'aaaaaaa'), pc('0.3.4-1', 'ccccccc')];
+  for (const order of [fleet, fleet.slice().reverse()]) {
+    const ref = M.fleetBuild(order);
+    assert.deepEqual(plain(ref), { version: '0.3.6-1', build: null });
+    assert.deepEqual(fleet.map(c => M.driftWords(c, ref)), [
+      'Others run another build', 'Others run another build',
+      'Others run another build', 'Others run another build', 'Others run ibara 0.3.6-1']);
+    assert.equal(M.driftWords(fleet[0], ref, true), 'Others run another build');
+  }
+});
+
 test('no build beside computers that send one, on the same version, is another build', () => {
   const old = pc('0.3.6-1'), fleet = [pc('0.3.6-1', '1a2b3c4'), pc('0.3.6-1', '1a2b3c4'), old];
-  assert.equal(M.driftWords(old, M.fleetBuild(fleet)), 'Others run another build of 0.3.6-1');
+  assert.equal(M.driftWords(old, M.fleetBuild(fleet)), 'Others run another build');
 });

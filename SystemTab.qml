@@ -126,7 +126,14 @@ Item {
         }
         Copy {
           width: parent.width
-          text: "ibara " + (root.computer && root.computer.version || "version pending")
+          text: "ibara " + (root.computer && root.computer.version || "version pending") + (root.computer && root.computer.build ? " · build " + root.computer.build : "")
+          font.pixelSize: Style.font.bodySmall
+        }
+        Copy {
+          visible: text !== ""
+          width: parent.width
+          text: StatusModel.driftWords(root.computer, root.service ? root.service.fleetBuild : null, true)
+          color: root.tokens.textTint(root.tokens.pausedColor)
           font.pixelSize: Style.font.bodySmall
         }
         Copy {

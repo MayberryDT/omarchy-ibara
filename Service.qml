@@ -150,6 +150,8 @@ Item {
   onApprovalsChanged: Qt.callLater(root.republishWaiting)
   onQuestionsChanged: Qt.callLater(root.republishWaiting)
   readonly property var fleetCounts: StatusModel.fleetCounts(computers)
+  // The build most of the fleet runs; a computer on another one says so (StatusModel.driftWords).
+  readonly property var fleetBuild: StatusModel.fleetBuild(computers)
   // The live task a computer reports to an observing operator: title and start, its latest step in
   // plain words and its latest click (a fraction of the screen), bound to its task_ref.
   function sanitizedActiveTask(value, ref) {
@@ -4285,6 +4287,8 @@ Item {
             ibara_update: StatusModel.ibaraUpdateView(authenticated.ibara_update),
             ibara_update_supported: authenticated.ibara_update !== undefined,
             version: StatusModel.clip(authenticated.version, 64),
+            // Which build of that version, from a core that says (optional; "" otherwise).
+            build: StatusModel.clip(authenticated.build, 64),
             video: StatusModel.videoView(authenticated.video)
           })
           publishSessions(statusSessions)

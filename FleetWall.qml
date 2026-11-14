@@ -524,6 +524,8 @@ Item {
         readonly property string computerId: String(model.computerId)
         readonly property var computer: root.computerById(computerId)
         readonly property string fleetState: root.tokens.stateOf(computer)
+        // What the card says when it runs another build than most of the fleet, else "".
+        readonly property string drift: StatusModel.driftWords(computer, root.service ? root.service.fleetBuild : null)
         readonly property bool current: grid.currentIndex === index
         readonly property bool actionsFocused: actionsLoader.activeFocus
         readonly property bool focused: (current && grid.activeFocus) || actionsFocused
@@ -590,7 +592,7 @@ Item {
             Behavior on y { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
           }
           Accessible.role: Accessible.Button
-          Accessible.name: root.tokens.label(cell.computer) + (root.favorites[cell.computerId] ? ", favorite" : "") + ", " + root.tokens.stateLabel(cell.fleetState, cell.computer) + ". " + root.tokens.activity(cell.computer, root.service ? root.service.nowMs : 0)
+          Accessible.name: root.tokens.label(cell.computer) + (root.favorites[cell.computerId] ? ", favorite" : "") + ", " + root.tokens.stateLabel(cell.fleetState, cell.computer) + ". " + root.tokens.activity(cell.computer, root.service ? root.service.nowMs : 0) + (cell.drift ? ". " + cell.drift : "")
           MouseArea {
             anchors.fill: parent
             onClicked: { grid.currentIndex = index; if (root.host) root.host.showComputer(cell.computerId) }
@@ -660,7 +662,13 @@ Item {
                     font.pixelSize: Style.font.bodySmall
                   }
                 }
-                // A late picture, over the last one.
+                // Another build than most of the fleet runs, then a late picture over the last one.
+                Copy {
+                  visible: text !== ""
+                  text: cell.drift
+                  color: root.tokens.textTint(root.tokens.pausedColor)
+                  font.pixelSize: Style.font.bodySmall
+                }
                 Copy {
                   visible: preview.hasFrame && !!cell.computer && cell.computer.frame_error === StatusModel.PICTURE_LATE
                   text: StatusModel.PICTURE_LATE

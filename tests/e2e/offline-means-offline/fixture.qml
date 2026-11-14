@@ -74,7 +74,7 @@ ShellRoot {
         lab.check("build_kept_from_status", !!lab.s("fictional-00") && lab.s("fictional-00").build === "1a2b3c4" && lab.s("fictional-01").build === "9f8e7d6")
         lab.check("fleet_build_is_the_most_common", !!svc.fleetBuild && svc.fleetBuild.version === "0.3.6-1" && svc.fleetBuild.build === "1a2b3c4")
         lab.check("different_version_flagged", lab.drift("fictional-04") === "Others run ibara 0.3.6-1")
-        lab.check("different_build_flagged", lab.drift("fictional-01") === "Others run another build of 0.3.6-1")
+        lab.check("different_build_flagged", lab.drift("fictional-01") === "Others run another build")
         lab.check("same_build_not_flagged", ["fictional-00", "fictional-02", "fictional-03", "fictional-05", "fictional-07"].every(function(id) { return lab.drift(id) === "" }))
         lab.check("no_version_not_flagged", lab.drift("fictional-06") === "" && !lab.s("fictional-06").version)
         lab.check("all_ready_before_trouble", ["fictional-00", "fictional-01", "fictional-03", "fictional-04", "fictional-05", "fictional-07"].every(function(id) { return lab.state(id) === "ready" && !!lab.s(id).frame }))

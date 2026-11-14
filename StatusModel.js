@@ -786,6 +786,38 @@ function versionCompare(a, b) {
   }
   return 0
 }
+// The build most of the fleet runs: the version, with its build when the core reports one
+// (operator-status `build`), that the most computers last reported; the newest when tied. When as
+// many computers run another build of that version, no build is the fleet's (build null). A
+// computer that hasn't answered with a version doesn't count. → { version, build } or null.
+function fleetBuild(computers) {
+  var counts = {}, top = null, list = Array.isArray(computers) ? computers : []
+  for (var i = 0; i < list.length; i++) {
+    var c = asObject(list[i]), version = String(c.version || ""), build = String(c.build || "")
+    if (!version) continue
+    var key = version + "\n" + build
+    counts[key] = counts[key] || { version: version, build: build, count: 0 }
+    counts[key].count += 1
+  }
+  var keys = Object.keys(counts)
+  keys.forEach(function(k) {
+    var b = counts[k], newer = top ? versionCompare(b.version, top.version) || (b.version > top.version) - (b.version < top.version) : 1
+    if (!top || b.count > top.count || (b.count === top.count && newer > 0)) top = b
+  })
+  if (!top) return null
+  var mixed = keys.some(function(k) { return counts[k] !== top && counts[k].count === top.count && counts[k].version === top.version })
+  return { version: top.version, build: mixed ? null : top.build }
+}
+// What a computer says when it runs another build than most of the fleet, else "". The card shows
+// it under the computer's own version; `detail` (its System tab) names the fleet's build too.
+function driftWords(session, fleet, detail) {
+  var c = asObject(session), ref = asObject(fleet), version = String(c.version || "")
+  if (!version || !ref.version) return ""
+  var named = detail && ref.build ? " · build " + ref.build : ""
+  if (version !== String(ref.version)) return "Others run ibara " + ref.version + named
+  if (ref.build !== null && String(c.build || "") === String(ref.build || "")) return ""
+  return named ? "Others run build " + ref.build : "Others run another build"
+}
 function ibaraUpdateView(value) {
   if (!value || typeof value !== "object" || ["running", "done", "failed"].indexOf(value.state) === -1) return null
   return { state: value.state, version: clip(value.version, 64), from: clip(value.from, 64), started_at: timeMs(value.started_at), finished_at: timeMs(value.finished_at), shell: clip(value.shell, 32), message: clip(value.message, 240) }
