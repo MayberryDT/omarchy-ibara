@@ -24,7 +24,11 @@ It runs two labs offscreen, each in an isolated home and runtime folder against 
 | --- | --- | --- |
 | [results-before.json](results-before.json) | These checks against the code of `91f89e0` (public `main` 162b055 plus the first checks) | 31 of 51 fail: every late-picture, outage, start-up, coming-back and drift case; the 19 guards and preconditions and the error check pass |
 | [results-fixed.json](results-fixed.json) | The fix, `Service.qml` and `StatusModel.js` SHA-256 in the file | All 51 pass |
+| [results-review-before.json](results-review-before.json) | With the review's checks 28–30, against the code of `f153072` | 4 of 56 fail: the computer that answered and the one removed and added again go Offline on their next unanswered read, a card shows "clearWatchAcknowledgment is not defined", and the revoked computer keeps its picture after its first refusal |
+| [results-review-fixed.json](results-review-fixed.json) | After the review's fixes, SHA-256 in the file | All 56 pass |
 
 Both ran on one Omarchy computer (Omarchy 4.5.0rc2, Quickshell 0.3.2, Qt 6.12), side by side. With the console open, the long outage went Offline 46 s after it began, after four unanswered reads, raised "FICTIONAL 08 isn't answering" 60 s later, and came back on the first answered read, 6 s after the outage ended; before the fix it went Offline after 4 s with no unanswered read, from a picture. With nothing open, the computer silent from the start showed Connecting and went Offline at 30 s (before: at once), and the one back from Offline read Ready (before: Needs Attention, still "isn't answering").
+
+The review's two ran on another Omarchy computer (Quickshell 0.3.2), offscreen, while it was busy with other work.
 
 Limits: fictional computers, one machine, offscreen. The daemon's failures are instant or 10 s; a real route's timing varies. No live desktop, real fleet computer or real build field was used. Without a theme, a bare `Color` in `Tokens.qml` resolves to QtQuick's own in this harness, so colours fail once while the configuration loads; the run counts errors after that.
