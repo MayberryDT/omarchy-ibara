@@ -328,15 +328,25 @@ Item {
       color: Qt.alpha(Color.popups.background, 0.88)
       border.width: 1
       border.color: root.tokens.rule
-      Row {
+      Column {
         id: tagRow
         anchors.centerIn: parent
-        spacing: Style.space(7)
-        StateMarker { tokens: root.tokens; fleetState: root.fleetState; anchors.verticalCenter: parent.verticalCenter }
+        spacing: Style.space(2)
+        Row {
+          spacing: Style.space(7)
+          StateMarker { tokens: root.tokens; fleetState: root.fleetState; anchors.verticalCenter: parent.verticalCenter }
+          Copy {
+            anchors.verticalCenter: parent.verticalCenter
+            text: (root.service ? root.service.turnWords(root.computer.computer_id) : "") || root.tokens.stateLabel(root.fleetState, root.computer)
+            color: root.tokens.textTint(root.tokens.stateColor(root.fleetState))
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+        // A late picture, over the last one.
         Copy {
-          anchors.verticalCenter: parent.verticalCenter
-          text: (root.service ? root.service.turnWords(root.computer.computer_id) : "") || root.tokens.stateLabel(root.fleetState, root.computer)
-          color: root.tokens.textTint(root.tokens.stateColor(root.fleetState))
+          visible: preview.hasFrame && !!root.computer && root.computer.frame_error === StatusModel.PICTURE_LATE
+          text: StatusModel.PICTURE_LATE
+          dimmed: true
           font.pixelSize: Style.font.bodySmall
         }
       }

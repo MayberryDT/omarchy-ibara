@@ -150,6 +150,8 @@ Item {
   onApprovalsChanged: Qt.callLater(root.republishWaiting)
   onQuestionsChanged: Qt.callLater(root.republishWaiting)
   readonly property var fleetCounts: StatusModel.fleetCounts(computers)
+  // The build most of the fleet runs; a computer on another one says so (StatusModel.driftWords).
+  readonly property var fleetBuild: StatusModel.fleetBuild(computers)
   // The live task a computer reports to an observing operator: title and start, its latest step in
   // plain words and its latest click (a fraction of the screen), bound to its task_ref.
   function sanitizedActiveTask(value, ref) {
@@ -357,12 +359,15 @@ Item {
     var id = String(computerId || "")
     if (scopedCache[id]) { var cache = Object.assign({}, scopedCache); delete cache[id]; scopedCache = cache }
     if (remoteFileCache[id]) { var files = Object.assign({}, remoteFileCache); delete files[id]; remoteFileCache = files }
+    // A refusal is an answer, and a computer added again starts over: its unanswered reads go too.
+    forgetUnanswered(id)
   }
   // Entries for computers no longer in the directory, or read under another identity, go.
   function pruneComputerCaches() {
     var id
     for (id in scopedCache) if (scopedCache[id].identity !== cacheIdentity(id)) forgetComputerCaches(id)
     for (id in remoteFileCache) if (remoteFileCache[id].identity !== fileCacheIdentity(id)) forgetComputerCaches(id)
+    for (id in unanswered) if (!sessions[id]) forgetUnanswered(id)
   }
   // A computer's command line over its pairing route, or null while ibara has no connection to it yet.
   function computerArgs(command, computerId, rest) {
@@ -1102,7 +1107,7 @@ Item {
   }
   function hideRequestPopup(ref, popupOnly) {
     var next = Object.assign({}, hiddenRequestPopups)
-    var item = requestItems.filter(function(item) { return item.ref === ref })[0]
+    var item = dropdownRequests.filter(function(item) { return item.ref === ref })[0]
     next[ref] = { at: Date.now(), signature: requestAlertSignature(item), popupOnly: popupOnly === true }
     var refs = Object.keys(next).sort(function(a,b) { return Number(next[b].at) - Number(next[a].at) })
     refs.slice(512).forEach(function(key) { delete next[key] })
@@ -1116,11 +1121,25 @@ Item {
     if (!item || item.kind !== "login" || requestPopupHidden(item)) return
     hideRequestPopup(ref, true)
   }
+  // The quick panel's Dismiss requests (and IPC dismissRequests): every request it lists is put
+  // away here, as ✕ on its pop-up does, and stays answerable in the console. → {remaining}
+  function dismissRequests() {
+    dropdownRequests.forEach(function(item) { root.hideRequestPopup(item.ref) })
+    return JSON.stringify({ remaining: dropdownRequests.filter(function(item) { return root.requestNeedsAlert(item) }).length })
+  }
   function openRequest(item) {
     if (shell && item) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: item.computer_id, focus: "request", ref: item.ref }))
   }
   function openRequestSettings() { if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "logins" })) }
   readonly property var requestItems: approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
+  // What the quick panel lists: these, and a card for each computer whose request needs a newer
+  // ibara, bound to that request's own identity, so dismissing the card puts away that request.
+  readonly property var dropdownRequests: requestItems.concat(needsYou.filter(function(item) { return item.unsupported }).map(function(item) {
+    var original = root.attention.filter(function(request) {
+      return String(request.computer_id || "") === item.computer_id && request.ref && request.kind !== "repair" && ["approval", "login", "question"].indexOf(request.kind) === -1
+    })[0]
+    return original ? Object.assign({}, item, { ref: original.ref, at: original.at }) : null
+  }).filter(function(item) { return !!item })).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
   readonly property var popupRequests: requestDismissalsReady && !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
     ? requestItems.filter(function(item) {
         return root.requestNeedsAlert(item) && !root.requestPopupHidden(item) && root.requestKindEnabled(item.kind) && (item.kind !== "login" || (root.loginNeedsNotification(item) && (item.login.assistance || !root.loginSourceElsewhere(item))))
@@ -1739,8 +1758,31 @@ Item {
     sessionRetry = retry
   }
   function clearRetryState(computerId) {
-    if (sessionRetry[computerId]) { var retry = Object.assign({}, sessionRetry); delete retry[computerId]; sessionRetry = retry }
+    noteAnswered(computerId)
     if (previewBackoff[computerId]) { var backoff = Object.assign({}, previewBackoff); delete backoff[computerId]; previewBackoff = backoff }
+  }
+  // It answered: no retry wait, and its unanswered reads start over. Its pictures keep their own backoff.
+  function noteAnswered(computerId) {
+    if (sessionRetry[computerId]) { var retry = Object.assign({}, sessionRetry); delete retry[computerId]; sessionRetry = retry }
+    forgetUnanswered(computerId)
+  }
+  function forgetUnanswered(computerId) {
+    if (unanswered[computerId]) { var heard = Object.assign({}, unanswered); delete heard[computerId]; unanswered = heard }
+  }
+  // Offline means the computer isn't answering: its status (or session) read went unanswered
+  // offlineAfterReads times in a row, the first at least offlineAfterMs ago. A read gives up after
+  // 10–15 s and is retried 5 s, then 10 s, then 20 s later (deferSessionRetry), so a computer that
+  // is slow for a few seconds fails one read, sometimes two, and one whose ibara restarts fails
+  // reads at once for a few seconds; neither is Offline. A late picture never counts. One answered
+  // status, or one picture, brings it back (clearRetryState).
+  readonly property int offlineAfterReads: 3
+  readonly property int offlineAfterMs: 30000
+  property var unanswered: ({})
+  function noteUnanswered(computerId) {
+    var now = Date.now(), prior = unanswered[computerId], next = Object.assign({}, unanswered)
+    next[computerId] = { count: prior ? prior.count + 1 : 1, since: prior ? prior.since : now }
+    unanswered = next
+    return next[computerId].count >= offlineAfterReads && now - next[computerId].since >= offlineAfterMs
   }
   function refreshComputerSessions() {
     // Nothing open: the bar's own polling (right after the directory answers, then each refresh).
@@ -1883,7 +1925,9 @@ Item {
   // you) is read about every second, up to eight per tick, and for 10 s after it settles, so its
   // step line, clicks, approvals and Done arrive at once; the open computer too while it moves.
   // The rest are read at most every 20 s, up to four per tick. One read per computer at a time.
-  // Denied and offline cards keep their own backoff paths.
+  // Denied cards keep their own backoff path. One whose last read went unanswered, Offline or
+  // not, waits out its retry (deferSessionRetry) and is then read at once, so it goes Offline
+  // only after several unanswered reads and one answer brings it back.
   property var statusPolledAt: ({})
   // computerId → ms until which it is read at the fast pace; not bound.
   property var statusFastUntil: ({})
@@ -1914,8 +1958,7 @@ Item {
     var anyMoving = false, fresh = []
     for (var i = 0; i < ids.length; i++) {
       var id = ids[i], s = sessions[id]
-      if (!s || s.trust_state !== "verified" || !s.controller_epoch ||
-          s.connection === "unauthorized" || s.connection === "offline") continue
+      if (!s || s.trust_state !== "verified" || !s.controller_epoch || s.connection === "unauthorized") continue
       if (statusMoving(s)) statusFastUntil[id] = now + 10000
       var quick = now < Number(statusFastUntil[id] || 0)
       // Approvals and questions come quickly while an agent may ask on a computer in view (not
@@ -1924,10 +1967,10 @@ Item {
       // so ibarad reads them now rather than answer from its last read.
       if (quick && s.fleet_state !== "paused" && s.fleet_state !== "human") anyMoving = true
       if (quick && (s.fleet_state === "working" || s.fleet_state === "attention")) fresh.push(id)
-      if (readPending("session-status:" + id)) continue
+      if (readPending("session-status:" + id) || (sessionRetry[id] && now < sessionRetry[id].until)) continue
       var age = now - Number(statusPolledAt[id] || 0)
       // The open computer and the ones held here keep their own 5 s read while nothing moves there.
-      if (quick && age >= statusFastMs - 100) fast.push(id)
+      if ((quick || unanswered[id]) && age >= statusFastMs - 100) fast.push(id)
       else if (!quick && age >= statusSlowMs && id !== selectedComputerId && !holdsControlOn(id)) slow.push(id)
     }
     if (!anyMoving) fresh = []
@@ -2125,12 +2168,12 @@ Item {
     for (var i = 0; i < previewActive.length; i++) if (!previewActive[i]) { lane = i; break }
     if (lane < 0) return
     var queue = previewQueue.slice()
-    // Computers already known offline share one lane, so several unreachable targets
-    // cannot hold every lane for their full timeout while healthy cards wait.
-    var isOffline = function(item) { var s = item && sessions[item.computer_id]; return !!s && s.connection === "offline" }
-    var offlineActive = previewActive.some(isOffline)
+    // Computers known offline or whose pictures are late share one lane, so several slow or
+    // unreachable targets cannot hold every lane for their full timeout while healthy cards wait.
+    var isSlow = function(item) { var s = item && sessions[item.computer_id]; return !!s && (s.connection === "offline" || !!previewBackoff[item.computer_id]) }
+    var slowActive = previewActive.some(isSlow)
     var chosen = queue.findIndex(function(item) { return item.quality === "selected" })
-    if (chosen < 0) chosen = queue.findIndex(function(item) { return !(offlineActive && isOffline(item)) })
+    if (chosen < 0) chosen = queue.findIndex(function(item) { return !(slowActive && isSlow(item)) })
     if (chosen < 0) return
     var request = queue.splice(chosen, 1)[0]
     previewQueue = queue
@@ -2192,7 +2235,7 @@ Item {
     requestRead("preview-release", ["preview-release"].concat(keep))
   }
   // ibarad answers each preview within 15 s. A lane older than 20 s never got its answer:
-  // fail it, and ignore the answer if it still comes.
+  // fail it as a late picture, and ignore the answer if it still comes.
   function expireStalePreviews() {
     var now = Date.now()
     for (var lane = 0; lane < previewActive.length; lane++) {
@@ -2239,7 +2282,8 @@ Item {
           updated[request.computer_id] = Object.assign({}, session, { frame: frame, frame_error: "", connection: "ready", locked: false, capture_age_ms: isFinite(age) && age >= 0 ? age : null })
           publishSessions(updated)
           enforcePreviewMemory()
-          if (previewBackoff[request.computer_id]) { var cleared = Object.assign({}, previewBackoff); delete cleared[request.computer_id]; previewBackoff = cleared }
+          // It answers: no backoff, and its unanswered reads start over.
+          clearRetryState(request.computer_id)
         }
       } catch (error) {
         var failed = Object.assign({}, sessions)
@@ -2256,10 +2300,11 @@ Item {
     var code = String(error && error.code || ""), message = String(error && error.message || "")
     return code === "IDENTITY_MISMATCH" || code === "STALE_EPOCH" || /^STALE_EPOCH\b/.test(message) || /(^|: )Target binding changed\.$/.test(message)
   }
-  // Fail closed. Only known transient conditions keep the last authorized frame: route
-  // timeouts/loss (labeled offline, with backoff) and a busy, missing or late capture
-  // (annotated). Any other refusal (denial, revocation, forget, identity change, unknown)
-  // clears the pixels until an authenticated status confirms access again.
+  // Fail closed. Only known transient conditions keep the last authorized frame: a late picture
+  // (no answer in time, or its route timed out or closed; noted, with backoff) and a busy or
+  // missing capture (annotated). A late picture never makes the computer Offline: only its status
+  // reads do. Any other refusal (denial, revocation, forget, identity change, unknown) clears the
+  // pixels until an authenticated status confirms access again.
   property var previewBackoff: ({})
   function refusePreview(computerId, error) {
     var session = sessions[computerId]
@@ -2267,23 +2312,24 @@ Item {
     var code = String(error && error.code || ""), message = String(error && (error.message || error.code) || "Preview refused.")
     // ibara on this computer stopped, not the computer: it keeps its last picture and state.
     if (code === "DAEMON_UNAVAILABLE") return
-    var offline = ["TIMEOUT", "OPERATOR_TRANSPORT_UNAVAILABLE"].indexOf(code) !== -1 || /^Selected operator transport (timed out|closed)/.test(message)
+    var late = ["TIMEOUT", "OPERATOR_TRANSPORT_UNAVAILABLE"].indexOf(code) !== -1 || /^(Selected operator transport (timed out|closed)|TIMEOUT\b)/.test(message)
     // A locked screen refuses pictures (HUMAN_CONTROL): the computer answers and is Locked, not refused.
     var locked = /\bHUMAN_CONTROL\b/.test(code + " " + message) && /\blocked\b/i.test(message)
     var updated = Object.assign({}, sessions)
-    if (offline || locked || /^(BUDGET_EXCEEDED|CAPABILITY_UNAVAILABLE|TIMEOUT)\b/.test(message)) {
-      if (offline) {
-        // Per-target jittered exponential backoff (3 s → 60 s) so unreachable computers cannot hold the lanes.
+    if (late || locked || /^(BUDGET_EXCEEDED|CAPABILITY_UNAVAILABLE)\b/.test(message)) {
+      if (late) {
+        // Per-target jittered exponential backoff (3 s → 60 s) so slow or unreachable computers cannot hold the lanes.
         var backoff = Object.assign({}, previewBackoff), prior = backoff[computerId]
         var delay = Math.min(60000, prior ? prior.delay * 2 : 3000)
         backoff[computerId] = { delay: delay, failed: Date.now(), until: Date.now() + Math.round(delay * (0.8 + Math.random() * 0.4)) }
         previewBackoff = backoff
       }
-      updated[computerId] = Object.assign({}, session, { connection: offline ? "offline" : session.connection, locked: locked || session.locked === true, frame_error: locked ? "Screen locked · Join to unlock" : StatusModel.clip(message, 200) })
+      // An Offline computer keeps saying it isn't answering.
+      var note = locked ? "Screen locked · Join to unlock" : !late ? StatusModel.clip(message, 200) : session.connection === "offline" ? session.frame_error : StatusModel.PICTURE_LATE
+      updated[computerId] = Object.assign({}, session, { locked: locked || session.locked === true, frame_error: note })
     } else {
       var epochChanged = targetEpochChanged(error)
       invalidateTargetPreviews(computerId)
-      clearWatchAcknowledgment(computerId)
       if (epochChanged) clearTargetEpoch(computerId, session.controller_epoch)
       else forgetComputerCaches(computerId)
       updated[computerId] = Object.assign({}, session, {
@@ -2899,7 +2945,8 @@ Item {
   // With no console or quick panel open nothing else reads a computer's status, yet the bar shows
   // what is happening from the start: every computer's status is read at most once a minute (its
   // session opened first), and one the bar counts as offline or needing attention on every
-  // refresh, each with its own backoff, so a problem that has passed never keeps the bar red.
+  // refresh, each with its own backoff, so a problem that has passed never keeps the bar red; so is
+  // one whose last read went unanswered, so it goes Offline only after several.
   readonly property int closedStatusMs: 60000
   function pollClosedStatus() {
     if (panelOpen || denied || daemonDown) return
@@ -2907,7 +2954,7 @@ Item {
     for (var i = 0; i < computers.length; i++) {
       var c = computers[i], id = c.computer_id, state = StatusModel.computerState(c)
       if (c.trust_state !== "verified" || (sessionRetry[id] && now < sessionRetry[id].until)) continue
-      if (state !== "offline" && state !== "attention" && c.controller_epoch && now - Number(polled[id] || 0) < closedStatusMs) continue
+      if (state !== "offline" && state !== "attention" && !unanswered[id] && c.controller_epoch && now - Number(polled[id] || 0) < closedStatusMs) continue
       if (!c.controller_epoch) { if (!readPending("session-bootstrap:" + id)) requestRead("session-bootstrap:" + id, ["operator-session", "--computer", id], id) }
       else if (!readPending("session-status:" + id)) {
         polled[id] = now
@@ -4036,7 +4083,6 @@ Item {
     previewGeneration += 1
     previewQueue = []
     releasePreviewLanes()
-    clearWatchAcknowledgment()
     var protectedSessions = Object.assign({}, sessions)
     for (var computerId in protectedSessions) if (protectedSessions[computerId])
       protectedSessions[computerId] = Object.assign({}, protectedSessions[computerId], { frame: null, capture_age_ms: null })
@@ -4101,13 +4147,15 @@ Item {
         // ibara on this computer stopped: nothing is known about the computer, so it keeps its
         // last known state (the console says ibara isn't running).
         if (String(error.code || "") === "DAEMON_UNAVAILABLE") return
-        // No reply is not a refusal: like a preview that timed out or lost its transport, the
-        // computer is offline and keeps its last frame, grayed.
+        // No reply is not a refusal. Until several reads in a row go unanswered (noteUnanswered)
+        // the computer keeps its state; then it is offline and keeps its last frame, grayed.
         var unreachable = String(error.code || "") === "TIMEOUT" || /^Selected operator transport (timed out|closed|failed)/.test(String(error.message || ""))
         if (unreachable && sessions[request.ref]) {
-          var offlineSessions = Object.assign({}, sessions)
-          offlineSessions[request.ref] = Object.assign({}, sessions[request.ref], { connection: "offline", frame_error: plainError(String(error.message || error.code), request.ref, true) })
-          publishSessions(offlineSessions)
+          if (noteUnanswered(request.ref)) {
+            var offlineSessions = Object.assign({}, sessions)
+            offlineSessions[request.ref] = Object.assign({}, sessions[request.ref], { connection: "offline", frame_error: plainError(String(error.message || error.code), request.ref, true) })
+            publishSessions(offlineSessions)
+          }
           deferSessionRetry(request.ref)
           return
         }
@@ -4124,7 +4172,8 @@ Item {
             frame_error: plainError(String(error.message || error.code || "This computer refused access."), request.ref, false)
           })
           publishSessions(deniedSessions)
-          clearWatchAcknowledgment(request.ref)
+          // It answered, refusing or from a new start: its unanswered reads start over.
+          forgetUnanswered(request.ref)
           if (!epochChanged) { deferSessionRetry(request.ref); forgetComputerCaches(request.ref) }
           if (epochChanged) {
             clearTargetEpoch(request.ref, deniedSession.controller_epoch)
@@ -4143,7 +4192,6 @@ Item {
             frame_error: "You can no longer follow this task, so ibara stopped following it."
           })
           publishSessions(deniedSessions)
-          clearWatchAcknowledgment(request.ref)
           clearDeniedTarget(request.followSnapshot, request.followSnapshot)
           forgetComputerCaches(request.ref)
         }
@@ -4168,13 +4216,15 @@ Item {
         if (bootSession) {
           var bootDenied = /^(PERMISSION_DENIED|UNAUTHORIZED|AUTH_REQUIRED|GRANT_REVOKED|OPERATOR_TRANSPORT_UNAVAILABLE)\b/.test(bootMessage) ||
             ["PERMISSION_DENIED", "UNAUTHORIZED", "AUTH_REQUIRED", "GRANT_REVOKED"].indexOf(String(bootError.code || "")) !== -1
+          // Unanswered, it is offline only once several reads in a row have gone unanswered.
+          var bootOffline = !bootDenied && noteUnanswered(request.ref)
           invalidateTargetPreviews(request.ref)
           if (bootDenied) forgetComputerCaches(request.ref)
           var bootSessions = Object.assign({}, sessions)
-          bootSessions[request.ref] = Object.assign({}, bootSession, { connection: bootDenied ? "unauthorized" : "offline",
-            frame: null, capture_age_ms: null, active_task: null, frame_error: bootDenied ? StatusModel.clip(bootMessage, 200) : plainError(bootMessage, request.ref, true) })
+          bootSessions[request.ref] = Object.assign({}, bootSession, { connection: bootDenied ? "unauthorized" : bootOffline ? "offline" : bootSession.connection,
+            frame: null, capture_age_ms: null, active_task: null,
+            frame_error: bootDenied ? StatusModel.clip(bootMessage, 200) : bootOffline ? plainError(bootMessage, request.ref, true) : bootSession.frame_error })
           publishSessions(bootSessions)
-          clearWatchAcknowledgment(request.ref)
           deferSessionRetry(request.ref)
           settleWaiters(String(request.ref), bootDenied ? plainError(bootMessage, request.ref, false) : computerLabelFor(request.ref) + " isn't answering. Check that it's on, then try again.")
         }
@@ -4216,8 +4266,9 @@ Item {
               frame_error: "This computer doesn't let you watch its screen. Its Access tab shows who can."
             })
             publishSessions(statusSessions)
+            // It answered: its unanswered reads start over.
+            noteAnswered(request.ref)
             invalidateTargetPreviews(request.ref)
-            clearWatchAcknowledgment(request.ref)
           } else {
           var outputs = Array.isArray(authenticated.outputs) ? authenticated.outputs.filter(function(output) {
             return output && /^[A-Za-z0-9_.:-]{1,128}$/.test(String(output.display_id || ""))
@@ -4237,8 +4288,9 @@ Item {
             files_access: ["available_if_root_approved", "denied"].indexOf(String(authenticated.files || "")) !== -1 ? String(authenticated.files) : "",
             display_id: displayId,
             frame: displayId === identity.display_id ? identity.frame : null,
+            // Back from a refusal or from Offline, what its picture said then no longer holds.
             frame_error: !displayId ? (outputs.length ? "Choose a display on this computer's Screen tab." : noDisplayNotice)
-              : displayId === identity.display_id ? (identity.connection === "unauthorized" ? "Preview pending" : identity.frame_error) : "Preview pending",
+              : displayId === identity.display_id ? (["unauthorized", "offline"].indexOf(identity.connection) !== -1 ? "Preview pending" : identity.frame_error) : "Preview pending",
             // Paused by a person waits for Resume; paused by ibara itself resumes on its own.
             paused: authenticated.paused === true,
             pause_origin: ["person", "system"].indexOf(authenticated.pause_origin) !== -1 ? authenticated.pause_origin : null,
@@ -4254,10 +4306,14 @@ Item {
             ibara_update: StatusModel.ibaraUpdateView(authenticated.ibara_update),
             ibara_update_supported: authenticated.ibara_update !== undefined,
             version: StatusModel.clip(authenticated.version, 64),
+            // Which build of that version, from a core that says (optional; "" otherwise).
+            build: StatusModel.clip(authenticated.build, 64),
             video: StatusModel.videoView(authenticated.video)
           })
           publishSessions(statusSessions)
-          clearRetryState(request.ref)
+          // Back from Offline, its pictures are asked for at once too; otherwise a late picture keeps its backoff.
+          if (identity.connection === "offline") clearRetryState(request.ref)
+          else noteAnswered(request.ref)
           noteStatusMoments(request.ref, identity, statusSessions[request.ref])
           if (identity.screen_engine === "ibara" && authenticated.screen_engine === "sunshine" && authenticated.fallback_reason && viewerOpenOn(request.ref)) {
             var fallbackWaiting = Object.assign({}, pendingFallbackViewers)
@@ -4774,12 +4830,16 @@ Item {
     target: "io.zet.ibara"
     function refresh(): void { root.refresh() }
     function previewStats(): string { return root.previewStats() }
+    function dismissRequests(): string { return root.dismissRequests() }
     function status(): string {
       return JSON.stringify({
         connection: root.connectionState,
         error: root.lastError,
         computers: root.computers.length,
         needs_you: root.needsYouCount,
+        // What the quick panel lists, and whether the dismissal file has loaded.
+        visible_requests: root.dropdownRequests.filter(function(item) { return root.requestNeedsAlert(item) }).length,
+        dismissals_ready: root.requestDismissalsReady,
         questions: root.questions.length,
         problems: root.problems.map(function(p) { return p.heading })
       })

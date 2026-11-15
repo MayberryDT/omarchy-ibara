@@ -534,8 +534,11 @@ function listOf(value, key) {
 // A computer that answers with its screen locked (`locked`) is "locked": agents can't use it and
 // Join is how a person unlocks it.
 var ATTENTION_TASK_STATES = ["waiting_for_human", "interrupted", "blocked"]
+// A picture that didn't come in time. The last one stays with this note over it, and the computer
+// keeps its state: only its status reads say whether it is answering.
+var PICTURE_LATE = "Busy · picture is late"
 // Preview notes that are routine while a frame is on its way; any other note without a frame needs a look.
-var ROUTINE_FRAME_NOTES = /^(Preview pending|Preview unavailable|Waiting for an authorized preview\.|Not previewed: |Preview released |Controller restarted|This computer has no display yet\.|ibara dropped a picture |BUDGET_EXCEEDED\b)/
+var ROUTINE_FRAME_NOTES = /^(Preview pending|Preview unavailable|Waiting for an authorized preview\.|Not previewed: |Preview released |Controller restarted|This computer has no display yet\.|ibara dropped a picture |BUDGET_EXCEEDED\b|Busy · picture is late$)/
 
 function fleetState(session) {
   var state = computerState(session)
@@ -782,6 +785,44 @@ function versionCompare(a, b) {
     else if (x !== y) return x > y ? 1 : -1
   }
   return 0
+}
+// The build most of the fleet runs: the version that the most computers last reported (the newest
+// when tied), and among the computers on it that report a build (operator-status `build`), the
+// build the most report. A computer that hasn't answered with a version doesn't count; one whose
+// core sends no build (0.3.7 and older) counts for its version only, its build unknown. With no
+// build reported on that version, build is ""; when as many report another, no build is the
+// fleet's (build null). → { version, build } or null.
+function fleetBuild(computers) {
+  // Keyed by what computers report, so with no prototype: "__proto__" is a version like any other.
+  var versions = Object.create(null), builds = Object.create(null), top = "", list = Array.isArray(computers) ? computers : []
+  for (var i = 0; i < list.length; i++) {
+    var c = asObject(list[i]), version = String(c.version || ""), build = String(c.build || "")
+    if (!version) continue
+    versions[version] = (versions[version] || 0) + 1
+    if (build) { builds[version] = builds[version] || Object.create(null); builds[version][build] = (builds[version][build] || 0) + 1 }
+  }
+  Object.keys(versions).forEach(function(v) {
+    var newer = top ? versionCompare(v, top) || (v > top) - (v < top) : 1
+    if (!top || versions[v] > versions[top] || (versions[v] === versions[top] && newer > 0)) top = v
+  })
+  if (!top) return null
+  var on = builds[top] || Object.create(null), build = "", most = 0, tied = false
+  Object.keys(on).forEach(function(b) {
+    if (on[b] > most) { build = b; most = on[b]; tied = false }
+    else if (on[b] === most) tied = true
+  })
+  return { version: top, build: tied ? null : build }
+}
+// What a computer says when it runs another build than most of the fleet, else "". The card shows
+// it under the computer's own version; `detail` (its System tab) names the fleet's build too. A
+// build that isn't known (its core sends none) is never another build.
+function driftWords(session, fleet, detail) {
+  var c = asObject(session), ref = asObject(fleet), version = String(c.version || ""), build = String(c.build || "")
+  if (!version || !ref.version) return ""
+  var named = detail && ref.build ? " · build " + ref.build : ""
+  if (version !== String(ref.version)) return "Others run ibara " + ref.version + named
+  if (!build || ref.build === "" || build === ref.build) return ""
+  return named ? "Others run build " + ref.build : "Others run another build"
 }
 function ibaraUpdateView(value) {
   if (!value || typeof value !== "object" || ["running", "done", "failed"].indexOf(value.state) === -1) return null

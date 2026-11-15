@@ -524,6 +524,8 @@ Item {
         readonly property string computerId: String(model.computerId)
         readonly property var computer: root.computerById(computerId)
         readonly property string fleetState: root.tokens.stateOf(computer)
+        // What the card says when it runs another build than most of the fleet, else "".
+        readonly property string drift: StatusModel.driftWords(computer, root.service ? root.service.fleetBuild : null)
         readonly property bool current: grid.currentIndex === index
         readonly property bool actionsFocused: actionsLoader.activeFocus
         readonly property bool focused: (current && grid.activeFocus) || actionsFocused
@@ -590,7 +592,7 @@ Item {
             Behavior on y { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
           }
           Accessible.role: Accessible.Button
-          Accessible.name: root.tokens.label(cell.computer) + (root.favorites[cell.computerId] ? ", favorite" : "") + ", " + root.tokens.stateLabel(cell.fleetState, cell.computer) + ". " + root.tokens.activity(cell.computer, root.service ? root.service.nowMs : 0)
+          Accessible.name: root.tokens.label(cell.computer) + (root.favorites[cell.computerId] ? ", favorite" : "") + ", " + root.tokens.stateLabel(cell.fleetState, cell.computer) + ". " + root.tokens.activity(cell.computer, root.service ? root.service.nowMs : 0) + (cell.drift ? ". " + cell.drift : "")
           MouseArea {
             anchors.fill: parent
             onClicked: { grid.currentIndex = index; if (root.host) root.host.showComputer(cell.computerId) }
@@ -646,15 +648,31 @@ Item {
               height: tagRow.implicitHeight + Style.space(8)
               radius: 0
               color: Qt.alpha(Color.popups.background, 0.88)
-              Row {
+              Column {
                 id: tagRow
                 anchors.centerIn: parent
-                spacing: Style.space(7)
-                StateMarker { tokens: root.tokens; fleetState: cell.shownState; anchors.verticalCenter: parent.verticalCenter }
+                spacing: Style.space(2)
+                Row {
+                  spacing: Style.space(7)
+                  StateMarker { tokens: root.tokens; fleetState: cell.shownState; anchors.verticalCenter: parent.verticalCenter }
+                  Copy {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: cell.connecting ? "Connecting…" : ((root.service ? root.service.turnWords(cell.computerId) : "") || root.tokens.stateLabel(cell.shownState, cell.computer)) + (cell.computer.version ? " · ibara " + cell.computer.version : "")
+                    color: root.tokens.textTint(root.tokens.stateColor(cell.shownState))
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+                // Another build than most of the fleet runs, then a late picture over the last one.
                 Copy {
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: cell.connecting ? "Connecting…" : ((root.service ? root.service.turnWords(cell.computerId) : "") || root.tokens.stateLabel(cell.shownState, cell.computer)) + (cell.computer.version ? " · ibara " + cell.computer.version : "")
-                  color: root.tokens.textTint(root.tokens.stateColor(cell.shownState))
+                  visible: text !== ""
+                  text: cell.drift
+                  color: root.tokens.textTint(root.tokens.pausedColor)
+                  font.pixelSize: Style.font.bodySmall
+                }
+                Copy {
+                  visible: preview.hasFrame && !!cell.computer && cell.computer.frame_error === StatusModel.PICTURE_LATE
+                  text: StatusModel.PICTURE_LATE
+                  dimmed: true
                   font.pixelSize: Style.font.bodySmall
                 }
               }
@@ -666,7 +684,7 @@ Item {
               anchors.margins: Style.space(8)
               visible: !!root.favorites[cell.computerId]
               width: star.implicitWidth + Style.space(12)
-              height: tagRow.implicitHeight + Style.space(8)
+              height: star.implicitHeight + Style.space(8)
               radius: 0
               color: Qt.alpha(Color.popups.background, 0.88)
               Copy { id: star; anchors.centerIn: parent; text: "★"; font.pixelSize: Style.font.bodySmall; Accessible.ignored: true }
