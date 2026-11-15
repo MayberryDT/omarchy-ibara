@@ -1107,7 +1107,7 @@ Item {
   }
   function hideRequestPopup(ref, popupOnly) {
     var next = Object.assign({}, hiddenRequestPopups)
-    var item = requestItems.filter(function(item) { return item.ref === ref })[0]
+    var item = dropdownRequests.filter(function(item) { return item.ref === ref })[0]
     next[ref] = { at: Date.now(), signature: requestAlertSignature(item), popupOnly: popupOnly === true }
     var refs = Object.keys(next).sort(function(a,b) { return Number(next[b].at) - Number(next[a].at) })
     refs.slice(512).forEach(function(key) { delete next[key] })
@@ -1121,11 +1121,25 @@ Item {
     if (!item || item.kind !== "login" || requestPopupHidden(item)) return
     hideRequestPopup(ref, true)
   }
+  // The quick panel's Dismiss requests (and IPC dismissRequests): every request it lists is put
+  // away here, as ✕ on its pop-up does, and stays answerable in the console. → {remaining}
+  function dismissRequests() {
+    dropdownRequests.forEach(function(item) { root.hideRequestPopup(item.ref) })
+    return JSON.stringify({ remaining: dropdownRequests.filter(function(item) { return root.requestNeedsAlert(item) }).length })
+  }
   function openRequest(item) {
     if (shell && item) shell.summon("io.zet.ibara", JSON.stringify({ route: "computer", computerId: item.computer_id, focus: "request", ref: item.ref }))
   }
   function openRequestSettings() { if (shell) shell.summon("io.zet.ibara", JSON.stringify({ route: "logins" })) }
   readonly property var requestItems: approvals.concat(logins, questions).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
+  // What the quick panel lists: these, and a card for each computer whose request needs a newer
+  // ibara, bound to that request's own identity, so dismissing the card puts away that request.
+  readonly property var dropdownRequests: requestItems.concat(needsYou.filter(function(item) { return item.unsupported }).map(function(item) {
+    var original = root.attention.filter(function(request) {
+      return String(request.computer_id || "") === item.computer_id && request.ref && request.kind !== "repair" && ["approval", "login", "question"].indexOf(request.kind) === -1
+    })[0]
+    return original ? Object.assign({}, item, { ref: original.ref, at: original.at }) : null
+  }).filter(function(item) { return !!item })).sort(function(a, b) { return a.at - b.at || a.ref.localeCompare(b.ref) })
   readonly property var popupRequests: requestDismissalsReady && !serviceStopped && requestBool("request_popups") && !requestsInConsole && dndReady && (!requestDnd || requestBool("popup_dnd"))
     ? requestItems.filter(function(item) {
         return root.requestNeedsAlert(item) && !root.requestPopupHidden(item) && root.requestKindEnabled(item.kind) && (item.kind !== "login" || (root.loginNeedsNotification(item) && (item.login.assistance || !root.loginSourceElsewhere(item))))
@@ -4816,12 +4830,16 @@ Item {
     target: "io.zet.ibara"
     function refresh(): void { root.refresh() }
     function previewStats(): string { return root.previewStats() }
+    function dismissRequests(): string { return root.dismissRequests() }
     function status(): string {
       return JSON.stringify({
         connection: root.connectionState,
         error: root.lastError,
         computers: root.computers.length,
         needs_you: root.needsYouCount,
+        // What the quick panel lists, and whether the dismissal file has loaded.
+        visible_requests: root.dropdownRequests.filter(function(item) { return root.requestNeedsAlert(item) }).length,
+        dismissals_ready: root.requestDismissalsReady,
         questions: root.questions.length,
         problems: root.problems.map(function(p) { return p.heading })
       })

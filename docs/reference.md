@@ -17,7 +17,7 @@ Every shape is square: no rounded corners, pills or badges. Colors, font, scale 
 
 The bar shows a count when approvals, login requests, agents' questions or computers need you; clicking it opens that one computer (with the keyboard on the one approval's Approve), or the fleet when there are several. Otherwise it shows a dot for the fleet's worst state: red when a computer has been offline or needed attention for a minute or more (a restart or an update never counts; clicking opens it), purple when you have control of one, blue when agents are working, and no dot otherwise. Whatever makes the bar red has a toast in the console on every page that says why, and a toast put away there takes its red with it. With nothing open, a computer the bar counts as offline or needing attention is asked again on every refresh, so a problem that has passed clears. The tooltip reads `ibara · <summary>`. Approvals and computers that need you are read every 10 s (`fleet-attention`) even with nothing open, and each new approval raises one desktop notification with Approve and Deny on it (`notify-send --action`; the Omarchy shell's notification server shows the actions), unless Approval notifications is off in Settings. A login request raises one with Share and Don't Share (for every site it names) on the computer your logins come from, one saying to open the console while no computer shares, and none where another computer shares. An approval answered elsewhere closes its notification.
 
-The quick panel is small. What waits for your answer comes first, under its title: a request from another computer to use this one, with its code, Accept and Decline; then the first two approvals, login requests and agents' questions, oldest first, each approval with Approve, Deny and Details, and Always Allow on a send, spend or delete (A, D, Shift+A and I answer the first approval), and each login request as in the console; then "+N more waiting for your answer" with Show All, which opens the console. Then the number of computers, a count for each state, up to 5 computers, the ones that need attention or are in use first, and "+N more". Open Console is its main action. Enter on a computer opens the console at that computer. It shows no previews.
+The quick panel is small. What waits for your answer comes first, under its title: a request from another computer to use this one, with its code, Accept and Decline; then the first two approvals, login requests and agents' questions, oldest first, each approval with Approve, Deny and Details, and Always Allow on a send, spend or delete (A, D, Shift+A and I answer the first approval), and each login request as in the console; then "+N more waiting for your answer" with Show All, which opens the console. Dismiss requests, above them while any shows, puts away every request listed here, as ✕ on a pop-up does: each stays in the console, answerable, and a new one shows again. Then the number of computers, a count for each state, up to 5 computers, the ones that need attention or are in use first, and "+N more". Open Console is its main action. Enter on a computer opens the console at that computer. It shows no previews.
 
 ### Console
 
@@ -165,7 +165,9 @@ everyday commands (approvals, Fix It, power, settings, theme) run beside other
 actions, so none waits for Take Control or a file transfer. Shapes are in
 `tests/dev-fixture-daemon.mjs`.
 
-IPC target `io.zet.ibara`: `refresh`, `status`, `previewStats`. Shell
+IPC target `io.zet.ibara`: `refresh`, `status` (with `visible_requests`, how many requests the quick
+panel lists, and `dismissals_ready`, whether the dismissal file has loaded), `previewStats` and
+`dismissRequests` (the quick panel's Dismiss requests; it answers how many still wait). Shell
 summon/hide/toggle uses the same plugin id; the payload `{"route":"settings"}`
 opens Settings.
 

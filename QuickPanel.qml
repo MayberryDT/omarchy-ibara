@@ -24,16 +24,14 @@ Panel {
   readonly property Tokens tokens: Tokens {}
   readonly property var computers: service && Array.isArray(service.computers) ? service.computers.filter(function(c) { return !!(c && c.computer_id) }) : []
   readonly property bool stopped: !!service && service.serviceStopped === true
-  // Approvals, login requests and agents' questions, oldest first; the first two show here.
-  readonly property var approvals: service && Array.isArray(service.approvals) ? service.approvals : []
-  readonly property var logins: service && Array.isArray(service.logins) ? service.logins.filter(function(item) { return service.requestNeedsAlert(item) }) : []
-  readonly property var questions: service && Array.isArray(service.questions) ? service.questions : []
-  readonly property var asks: stopped ? [] : approvals.concat(logins, questions, service && service.needsYou ? service.needsYou.filter(function(n) { return n.unsupported }) : []).sort(function(a, b) { return a.at - b.at || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) })
+  // Approvals, login requests and agents' questions not dismissed, oldest first; the first two
+  // show here. Dismissed ones stay in the console.
+  readonly property var asks: stopped || !service || !Array.isArray(service.dropdownRequests) ? [] : service.dropdownRequests.filter(function(item) { return root.service.requestNeedsAlert(item) })
   property int askOffset: 0
   onAsksChanged: if (askOffset >= asks.length) askOffset = 0
   readonly property var shownAsks: asks.slice(askOffset, askOffset + 2)
   readonly property string moreAsksName: {
-    var a = approvals.length + logins.length, q = questions.length
+    var a = asks.filter(function(k) { return k.kind === "approval" || k.kind === "login" }).length, q = asks.filter(function(k) { return k.kind === "question" }).length
     var words = (a ? (a === 1 ? "1 approval" : a + " approvals") : "") + (a && q ? " and " : "") + (q ? (q === 1 ? "1 question" : q + " questions") : "")
     return "Browse " + words
   }
@@ -200,6 +198,13 @@ Panel {
           width: parent.width
           text: root.service ? "ibara " + root.service.updateAvailable + " available" : ""
           font.pixelSize: Style.font.bodySmall
+        }
+        ActionButton {
+          visible: root.asks.length > 0
+          label: "Dismiss requests"
+          size: "small"
+          role: "quiet"
+          onClicked: if (root.service) root.service.dismissRequests()
         }
         Repeater {
           id: askCards
