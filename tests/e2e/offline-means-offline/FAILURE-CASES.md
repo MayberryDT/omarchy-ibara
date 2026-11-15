@@ -40,6 +40,11 @@ keep holding after it.
     Offline at once.
 29. A computer removed from the fleet and added again keeps the unanswered reads from before it
     was removed: its first unanswered read once it is back marks it Offline at once.
+30. A refusal (a status that doesn't let you watch, a picture refused, a session refused) shows a
+    script's error as the computer's note ("clearWatchAcknowledgment is not defined"), and what
+    should follow it in the service never runs: clearing the refused picture, forgetting the lists
+    kept for that computer, waiting before asking it again. Checked in both labs, and for the
+    revoked computer: once a picture is refused, it must not keep its last picture.
 
 With nothing open (`closed.qml`: the bar's own polling, once a minute and on every refresh):
 

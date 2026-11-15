@@ -178,8 +178,9 @@ ShellRoot {
         lab.mark("long_back_unanswered", lab.unanswered("fictional-07"))
       }
       if (lab.marks.long_back_ms && now - lab.marks.long_back_ms >= 2000) lab.mark("long_problem_after_back", !!lab.problem("fictional-07"))
-      // Refusals fail closed.
+      // Refusals fail closed: once revoked, a refused picture takes the picture with it.
       if (t >= 40) lab.flag("fictional-05_offline", lab.offline("fictional-05"))
+      if (t >= 40) { var r5 = lab.s("fictional-05"); lab.flag("05_kept_picture_after_refusal", !!r5.frame && !!r5.frame_error && r5.frame_error !== lab.late) }
       if (t === 60) lab.check("revoked_fails_closed", lab.s("fictional-05").connection === "unauthorized" && !lab.s("fictional-05").frame && lab.s("fictional-05").frame_error !== lab.late && lab.state("fictional-05") === "attention")
       if (t >= 4) lab.flag("fictional-06_offline", lab.offline("fictional-06"))
       if (t === 20) lab.check("denied_fails_closed", lab.s("fictional-06").connection === "unauthorized" && !lab.s("fictional-06").frame && lab.state("fictional-06") === "attention")
@@ -200,6 +201,7 @@ ShellRoot {
         lab.check("long_outage_comes_back", !!lab.marks.long_back_ms && lab.marks.long_back_ms - lab.marks.long_outage_end_ms <= 75000)
         lab.check("back_clears_unanswered_and_problem", !!lab.marks.long_back_ms && lab.marks.long_back_unanswered === 0 && lab.marks.long_problem_after_back === false)
         lab.check("revoked_never_offline", !lab.flags["fictional-05_offline"])
+        lab.check("revoked_picture_goes_with_its_refusal", !lab.flags["05_kept_picture_after_refusal"])
         lab.check("denied_never_offline", !lab.flags["fictional-06_offline"])
         lab.check("answer_starts_unanswered_over", !!lab.marks["08_down_again_ms"] && !lab.flags["08_offline_after_one_more"])
         lab.check("removed_computer_starts_unanswered_over", !!lab.marks["09_listed_again_ms"] && !lab.flags["09_offline_after_one_more"])

@@ -2316,7 +2316,6 @@ Item {
     } else {
       var epochChanged = targetEpochChanged(error)
       invalidateTargetPreviews(computerId)
-      clearWatchAcknowledgment(computerId)
       if (epochChanged) clearTargetEpoch(computerId, session.controller_epoch)
       else forgetComputerCaches(computerId)
       updated[computerId] = Object.assign({}, session, {
@@ -4070,7 +4069,6 @@ Item {
     previewGeneration += 1
     previewQueue = []
     releasePreviewLanes()
-    clearWatchAcknowledgment()
     var protectedSessions = Object.assign({}, sessions)
     for (var computerId in protectedSessions) if (protectedSessions[computerId])
       protectedSessions[computerId] = Object.assign({}, protectedSessions[computerId], { frame: null, capture_age_ms: null })
@@ -4162,7 +4160,6 @@ Item {
           publishSessions(deniedSessions)
           // It answered, refusing or from a new start: its unanswered reads start over.
           forgetUnanswered(request.ref)
-          clearWatchAcknowledgment(request.ref)
           if (!epochChanged) { deferSessionRetry(request.ref); forgetComputerCaches(request.ref) }
           if (epochChanged) {
             clearTargetEpoch(request.ref, deniedSession.controller_epoch)
@@ -4181,7 +4178,6 @@ Item {
             frame_error: "You can no longer follow this task, so ibara stopped following it."
           })
           publishSessions(deniedSessions)
-          clearWatchAcknowledgment(request.ref)
           clearDeniedTarget(request.followSnapshot, request.followSnapshot)
           forgetComputerCaches(request.ref)
         }
@@ -4215,7 +4211,6 @@ Item {
             frame: null, capture_age_ms: null, active_task: null,
             frame_error: bootDenied ? StatusModel.clip(bootMessage, 200) : bootOffline ? plainError(bootMessage, request.ref, true) : bootSession.frame_error })
           publishSessions(bootSessions)
-          clearWatchAcknowledgment(request.ref)
           deferSessionRetry(request.ref)
           settleWaiters(String(request.ref), bootDenied ? plainError(bootMessage, request.ref, false) : computerLabelFor(request.ref) + " isn't answering. Check that it's on, then try again.")
         }
@@ -4260,7 +4255,6 @@ Item {
             // It answered: its unanswered reads start over.
             noteAnswered(request.ref)
             invalidateTargetPreviews(request.ref)
-            clearWatchAcknowledgment(request.ref)
           } else {
           var outputs = Array.isArray(authenticated.outputs) ? authenticated.outputs.filter(function(output) {
             return output && /^[A-Za-z0-9_.:-]{1,128}$/.test(String(output.display_id || ""))

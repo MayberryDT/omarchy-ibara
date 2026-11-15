@@ -66,6 +66,9 @@ for name in ("fixture","closed"):
     lab=json.loads(found[0]) if len(found)==1 else {"checks":{f"{name}_produced_one_result":False},"marks":{}}
     checks.update(lab["checks"]); marks[name]=m=lab["marks"]
     timeline[name]=[json.loads(x) for x in re.findall(r"OFFLINE_E2E_EVENT (\{[^\n]*\})",log)]
+    # A card's note is what a person reads: never a script's own error, which also means what
+    # should have followed it in the service never ran.
+    checks[f"{name}_no_script_error_notes"]=not [e for e in timeline[name] if re.search(r"is not defined|is not a function|TypeError|ReferenceError",str(e.get("note","")))]
     # Without the shell, a bare `Color` in Tokens.qml resolves to QtQuick's own Color, so its theme
     # colors fail once while the configuration loads. Any error once it has loaded counts.
     loaded=log.split("Configuration Loaded",1)
