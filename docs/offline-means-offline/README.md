@@ -10,7 +10,7 @@ Now only status reads decide Offline: three in a row unanswered, the first at le
 
 A late picture keeps the last one with "Busy · picture is late" under the state, and the computer keeps its state, group and color. Its pictures back off from 3 s to 60 s, and computers whose pictures are late share one of the four picture lanes, as Offline ones did. Denials, revocations and identity changes still clear the picture at once.
 
-Each computer's card also says when it runs another ibara version or build than most of the fleet. The core reports `version` in `operator-status`; a build identifier is read from an optional `build` field beside it, which current cores do not send yet. Without it, versions alone are compared and no build shows.
+Each computer's card also says when it runs another ibara version or build than most of the fleet. The core reports `version` in `operator-status`; a build identifier is read from an optional `build` field beside it, which cores up to 0.3.7 do not send. A computer that sends none counts for its version only: its build is unknown, so it is never flagged for it, and the fleet's build is the one most of the computers that send one report. With none sent, versions alone are compared and no build shows.
 
 ## Repeat
 

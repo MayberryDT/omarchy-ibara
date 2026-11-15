@@ -786,36 +786,42 @@ function versionCompare(a, b) {
   }
   return 0
 }
-// The build most of the fleet runs: the version, with its build when the core reports one
-// (operator-status `build`), that the most computers last reported; the newest when tied. When as
-// many computers run another build of that version, no build is the fleet's (build null). A
-// computer that hasn't answered with a version doesn't count. → { version, build } or null.
+// The build most of the fleet runs: the version that the most computers last reported (the newest
+// when tied), and among the computers on it that report a build (operator-status `build`), the
+// build the most report. A computer that hasn't answered with a version doesn't count; one whose
+// core sends no build (0.3.7 and older) counts for its version only, its build unknown. With no
+// build reported on that version, build is ""; when as many report another, no build is the
+// fleet's (build null). → { version, build } or null.
 function fleetBuild(computers) {
-  var counts = {}, top = null, list = Array.isArray(computers) ? computers : []
+  // Keyed by what computers report, so with no prototype: "__proto__" is a version like any other.
+  var versions = Object.create(null), builds = Object.create(null), top = "", list = Array.isArray(computers) ? computers : []
   for (var i = 0; i < list.length; i++) {
     var c = asObject(list[i]), version = String(c.version || ""), build = String(c.build || "")
     if (!version) continue
-    var key = version + "\n" + build
-    counts[key] = counts[key] || { version: version, build: build, count: 0 }
-    counts[key].count += 1
+    versions[version] = (versions[version] || 0) + 1
+    if (build) { builds[version] = builds[version] || Object.create(null); builds[version][build] = (builds[version][build] || 0) + 1 }
   }
-  var keys = Object.keys(counts)
-  keys.forEach(function(k) {
-    var b = counts[k], newer = top ? versionCompare(b.version, top.version) || (b.version > top.version) - (b.version < top.version) : 1
-    if (!top || b.count > top.count || (b.count === top.count && newer > 0)) top = b
+  Object.keys(versions).forEach(function(v) {
+    var newer = top ? versionCompare(v, top) || (v > top) - (v < top) : 1
+    if (!top || versions[v] > versions[top] || (versions[v] === versions[top] && newer > 0)) top = v
   })
   if (!top) return null
-  var mixed = keys.some(function(k) { return counts[k] !== top && counts[k].count === top.count && counts[k].version === top.version })
-  return { version: top.version, build: mixed ? null : top.build }
+  var on = builds[top] || Object.create(null), build = "", most = 0, tied = false
+  Object.keys(on).forEach(function(b) {
+    if (on[b] > most) { build = b; most = on[b]; tied = false }
+    else if (on[b] === most) tied = true
+  })
+  return { version: top, build: tied ? null : build }
 }
 // What a computer says when it runs another build than most of the fleet, else "". The card shows
-// it under the computer's own version; `detail` (its System tab) names the fleet's build too.
+// it under the computer's own version; `detail` (its System tab) names the fleet's build too. A
+// build that isn't known (its core sends none) is never another build.
 function driftWords(session, fleet, detail) {
-  var c = asObject(session), ref = asObject(fleet), version = String(c.version || "")
+  var c = asObject(session), ref = asObject(fleet), version = String(c.version || ""), build = String(c.build || "")
   if (!version || !ref.version) return ""
   var named = detail && ref.build ? " · build " + ref.build : ""
   if (version !== String(ref.version)) return "Others run ibara " + ref.version + named
-  if (ref.build !== null && String(c.build || "") === String(ref.build || "")) return ""
+  if (!build || ref.build === "" || build === ref.build) return ""
   return named ? "Others run build " + ref.build : "Others run another build"
 }
 function ibaraUpdateView(value) {
