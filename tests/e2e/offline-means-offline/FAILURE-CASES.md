@@ -35,6 +35,11 @@ keep holding after it.
 16. An Offline computer does not come back when a status read is answered, or needs more than one.
 17. (guard) A refused computer (denied, revoked) is shown as late or Offline instead of failing
     closed: its picture must clear and it must read as access not confirmed.
+28. A computer that answers after two unanswered status reads, with a status that doesn't let you
+    watch its screen, keeps them: one more unanswered read at least 30 s after the first marks it
+    Offline at once.
+29. A computer removed from the fleet and added again keeps the unanswered reads from before it
+    was removed: its first unanswered read once it is back marks it Offline at once.
 
 With nothing open (`closed.qml`: the bar's own polling, once a minute and on every refresh):
 

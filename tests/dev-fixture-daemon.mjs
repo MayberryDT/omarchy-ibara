@@ -52,6 +52,7 @@ const member = id => fleet && /^fictional-/.test(id) && valid(id) ? FLEET[Number
 const hostOf = id => member(id) ? member(id).name.toLowerCase() : 'fictional-only';
 const taskRefOf = id => `task_${hostOf(id)}_live`;
 // control.json simulates independent endpoint conditions: deny, offline, hang, picture_silent, revoked,
+// restored (removed computers added back),
 // epoch (a controller restart), displays ({computer_id: count}, default 1),
 // scoped_delay_ms (every per-computer read of tasks, results, access, logs, health and windows for one
 // computer answers that much later, as a slow computer does), one delayed "late" reply, and the
@@ -909,6 +910,8 @@ function answer(request) {
   }
   const loginReply = loginCommand(requestId, command, option, commandArgs);
   if (loginReply) return loginReply;
+  // control.json `restored`: computers removed with Remove Computer and added back since.
+  if (command === 'directory') for (const id of control().restored || []) removedIds.delete(id);
   if (command === 'directory') return respond(requestId, command, {computers:rows.filter(r => !removedIds.has(r.computer_id)).concat([...added.values()].map(row => ({...row, label:labelOf(row.computer_id), wake:wakeOf(row.computer_id)})))});
   // The console keeps no station; its computers are its directory.
   if (command === 'status') return respond(requestId, command, {station_configured:false});

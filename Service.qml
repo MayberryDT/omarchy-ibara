@@ -359,12 +359,15 @@ Item {
     var id = String(computerId || "")
     if (scopedCache[id]) { var cache = Object.assign({}, scopedCache); delete cache[id]; scopedCache = cache }
     if (remoteFileCache[id]) { var files = Object.assign({}, remoteFileCache); delete files[id]; remoteFileCache = files }
+    // A refusal is an answer, and a computer added again starts over: its unanswered reads go too.
+    forgetUnanswered(id)
   }
   // Entries for computers no longer in the directory, or read under another identity, go.
   function pruneComputerCaches() {
     var id
     for (id in scopedCache) if (scopedCache[id].identity !== cacheIdentity(id)) forgetComputerCaches(id)
     for (id in remoteFileCache) if (remoteFileCache[id].identity !== fileCacheIdentity(id)) forgetComputerCaches(id)
+    for (id in unanswered) if (!sessions[id]) forgetUnanswered(id)
   }
   // A computer's command line over its pairing route, or null while ibara has no connection to it yet.
   function computerArgs(command, computerId, rest) {
@@ -1747,6 +1750,9 @@ Item {
   // It answered: no retry wait, and its unanswered reads start over. Its pictures keep their own backoff.
   function noteAnswered(computerId) {
     if (sessionRetry[computerId]) { var retry = Object.assign({}, sessionRetry); delete retry[computerId]; sessionRetry = retry }
+    forgetUnanswered(computerId)
+  }
+  function forgetUnanswered(computerId) {
     if (unanswered[computerId]) { var heard = Object.assign({}, unanswered); delete heard[computerId]; unanswered = heard }
   }
   // Offline means the computer isn't answering: its status (or session) read went unanswered
@@ -4154,6 +4160,8 @@ Item {
             frame_error: plainError(String(error.message || error.code || "This computer refused access."), request.ref, false)
           })
           publishSessions(deniedSessions)
+          // It answered, refusing or from a new start: its unanswered reads start over.
+          forgetUnanswered(request.ref)
           clearWatchAcknowledgment(request.ref)
           if (!epochChanged) { deferSessionRetry(request.ref); forgetComputerCaches(request.ref) }
           if (epochChanged) {
@@ -4249,6 +4257,8 @@ Item {
               frame_error: "This computer doesn't let you watch its screen. Its Access tab shows who can."
             })
             publishSessions(statusSessions)
+            // It answered: its unanswered reads start over.
+            noteAnswered(request.ref)
             invalidateTargetPreviews(request.ref)
             clearWatchAcknowledgment(request.ref)
           } else {

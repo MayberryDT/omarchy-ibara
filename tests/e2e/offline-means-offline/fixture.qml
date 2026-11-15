@@ -3,18 +3,20 @@ import Quickshell
 import Quickshell.Io
 import "plugin" as P
 import "plugin/StatusModel.js" as StatusModel
-// The real Service.qml with the console open on eight fictional computers, against the fictional
+// The real Service.qml with the console open on ten fictional computers, against the fictional
 // daemon run.sh starts on this test's own socket. control.json changes what each computer does:
 //   00 pictures never answer from 15 s     01 pictures time out on their route from 15 s
 //   02 pictures never answer from the start 03 status and pictures fail 15–27 s (it is the open computer)
 //   04 healthy, on an older version         05 revoked at 40 s
 //   06 denied from the start                07 status and pictures fail 15–150 s
+//   08 fails two status reads from 15 s, then answers that it doesn't let you watch, then fails again
+//   09 fails two status reads from 15 s, is removed and added again, still failing
 // Each second it samples what the console would show; at the end it prints one OFFLINE_E2E line.
 // Times are seconds since the lab started. Checks of what only the fix adds read as false before it.
 ShellRoot {
   id: lab
   readonly property string late: "Busy · picture is late"
-  readonly property var ids: ["fictional-00", "fictional-01", "fictional-02", "fictional-03", "fictional-04", "fictional-05", "fictional-06", "fictional-07"]
+  readonly property var ids: ["fictional-00", "fictional-01", "fictional-02", "fictional-03", "fictional-04", "fictional-05", "fictional-06", "fictional-07", "fictional-08", "fictional-09"]
   readonly property double started: Date.now()
   property int tick: 0
   property var results: ({})
@@ -39,6 +41,14 @@ ShellRoot {
     controlState = Object.assign({}, controlState || JSON.parse(controlFile.text() || "{}"), change)
     controlFile.setText(JSON.stringify(controlState))
     console.log("OFFLINE_E2E_EVENT " + JSON.stringify({ t: at(), control: change }))
+  }
+  // Which computers answer nothing (control.json `offline`), one at a time.
+  property var down: ({})
+  function setDown(id, on) {
+    var next = Object.assign({}, down)
+    if (on) next[id] = true; else delete next[id]
+    down = next
+    setControl({ offline: Object.keys(next).sort() })
   }
   // Every change of what a computer shows, for the timeline in results.json.
   function record() {
@@ -81,12 +91,42 @@ ShellRoot {
       }
       if (t === 15) {
         lab.mark("trouble_ms", now)
-        lab.setControl({ picture_silent: ["fictional-02", "fictional-00"], hang: ["fictional-01"], offline: ["fictional-03", "fictional-07"] })
+        lab.setControl({ picture_silent: ["fictional-02", "fictional-00"], hang: ["fictional-01"] })
+        ;["fictional-03", "fictional-07", "fictional-08", "fictional-09"].forEach(function(id) { lab.setDown(id, true) })
       }
-      if (t === 27) lab.setControl({ offline: ["fictional-07"] })
+      if (t === 27) lab.setDown("fictional-03", false)
       if (t === 27) lab.mark("brief_outage_end_ms", now)
       if (t === 40) lab.setControl({ revoked: ["fictional-05"] })
-      if (t === 150) { lab.mark("long_outage_end_ms", now); lab.setControl({ offline: [] }) }
+      if (t === 150) { lab.mark("long_outage_end_ms", now); lab.setDown("fictional-07", false) }
+      // An answer, even a refusal, starts its unanswered reads over (08), and a computer taken
+      // out of the fleet takes its count with it (09): after it, one unanswered read is not
+      // Offline, however many went unanswered before and however long ago the first was.
+      if (t >= 15 && lab.unanswered("fictional-08") >= 1) lab.mark("08_first_unanswered_ms", now)
+      if (!lab.marks["08_answers_ms"] && lab.unanswered("fictional-08") >= 2) {
+        lab.mark("08_answers_ms", now)
+        lab.setControl({ deny: ["fictional-06", "fictional-08"] })
+        lab.setDown("fictional-08", false)
+      }
+      if (lab.marks["08_answers_ms"] && !lab.marks["08_denied_seen_ms"] && lab.s("fictional-08").observation === "denied") lab.mark("08_denied_seen_ms", now)
+      if (lab.marks["08_denied_seen_ms"] && !lab.marks["08_down_again_ms"] && now - lab.marks["08_first_unanswered_ms"] >= 32000) {
+        lab.mark("08_down_again_ms", now)
+        lab.setDown("fictional-08", true)
+      }
+      if (lab.marks["08_down_again_ms"] && now - lab.marks["08_down_again_ms"] <= 25000) lab.flag("08_offline_after_one_more", lab.offline("fictional-08"))
+      if (t >= 15 && lab.unanswered("fictional-09") >= 1) lab.mark("09_first_unanswered_ms", now)
+      if (!lab.marks["09_removed_ms"] && lab.unanswered("fictional-09") >= 2 && !svc.mutating) {
+        lab.mark("09_removed_ms", now)
+        svc.removeComputer("fictional-09")
+      }
+      if (lab.marks["09_removed_ms"] && !lab.marks["09_gone_ms"] && !lab.s("fictional-09")) lab.mark("09_gone_ms", now)
+      if (lab.marks["09_gone_ms"] && !lab.marks["09_back_ms"] && now - lab.marks["09_first_unanswered_ms"] >= 32000) {
+        lab.mark("09_back_ms", now)
+        lab.setControl({ restored: ["fictional-09"] })
+        svc.loadComputers()
+      }
+      if (lab.marks["09_back_ms"] && !lab.marks["09_listed_again_ms"] && !!lab.s("fictional-09")) lab.mark("09_listed_again_ms", now)
+      if (lab.marks["09_listed_again_ms"] && now - lab.marks["09_listed_again_ms"] <= 25000) lab.flag("09_offline_after_one_more", lab.offline("fictional-09"))
+      if (t === 200) { lab.setDown("fictional-08", false); lab.setDown("fictional-09", false); lab.setControl({ deny: ["fictional-06"] }) }
       // Late pictures: never Offline, never Needs attention, never a problem (00 and 01 from 15 s, 02 from the start).
       ;["fictional-00", "fictional-01", "fictional-02"].forEach(function(id) {
         if (t < (id === "fictional-02" ? 4 : 15)) return
@@ -161,6 +201,8 @@ ShellRoot {
         lab.check("back_clears_unanswered_and_problem", !!lab.marks.long_back_ms && lab.marks.long_back_unanswered === 0 && lab.marks.long_problem_after_back === false)
         lab.check("revoked_never_offline", !lab.flags["fictional-05_offline"])
         lab.check("denied_never_offline", !lab.flags["fictional-06_offline"])
+        lab.check("answer_starts_unanswered_over", !!lab.marks["08_down_again_ms"] && !lab.flags["08_offline_after_one_more"])
+        lab.check("removed_computer_starts_unanswered_over", !!lab.marks["09_listed_again_ms"] && !lab.flags["09_offline_after_one_more"])
         console.log("OFFLINE_E2E " + JSON.stringify({ checks: lab.results, marks: lab.marks, flags: lab.flags }))
         Qt.quit()
       }

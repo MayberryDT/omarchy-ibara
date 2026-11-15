@@ -1,6 +1,6 @@
 # 14 November 2026
 
-- A computer is Offline only when its status goes unanswered: three reads in a row, the first at least 30 seconds earlier. One answered status, or one picture, brings it back at once, as it is rather than under Needs Attention, and an Offline computer's status is still read while the console is open. A late picture keeps the last one with "Busy · picture is late" over it; it no longer makes the computer Offline, moves it under Needs Attention, turns the bar red or says the computer isn't answering.
+- A computer is Offline only when its status goes unanswered: three reads in a row, the first at least 30 seconds earlier. Any answer, even a refusal, starts the count over, and so does removing the computer. One answered status, or one picture, brings it back at once, as it is rather than under Needs Attention, and an Offline computer's status is still read while the console is open. A late picture keeps the last one with "Busy · picture is late" over it; it no longer makes the computer Offline, moves it under Needs Attention, turns the bar red or says the computer isn't answering.
 - A computer on another ibara version or build than most of the fleet says so on its card ("Others run ibara 0.3.6-1", "Others run another build"), and its System tab names the fleet's build. Builds show with a core that reports one in its status; otherwise versions alone are compared.
 
 # 8 November 2026
